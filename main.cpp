@@ -5,6 +5,8 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
+uint32_t g_Color;
+
 void rasterize_triangle_fixed16_8(
     uint32_t* fb, uint32_t fb_width,
     uint32_t x0, uint32_t y0, uint32_t z0,
@@ -33,6 +35,11 @@ void rasterize_triangle_fixed16_8(
     int32_t min_bary1 = ((int64_t)(x0 - x2) * (y_min - y2) - (int64_t)(y0 - y2) * (x_min - x2)) >> 8;
     int32_t min_bary2 = ((int64_t)(x1 - x0) * (y_min - y0) - (int64_t)(y1 - y0) * (x_min - x0)) >> 8;
 
+    // offset barycentrics of non top-left edges, which ever so slightly removes them from the rasterization
+    if ((y1 != y2 || x1 > x2) && (y1 < y2)) min_bary0 -= 1;
+    if ((y2 != y0 || x2 > x0) && (y2 < y0)) min_bary1 -= 1;
+    if ((y0 != y1 || x0 > x1) && (y0 < y1)) min_bary2 -= 1;
+
     // derivative of barycentric coordinates in x and y
     int32_t dbary0dx = y1 - y2;
     int32_t dbary0dy = x2 - x1;
@@ -41,11 +48,11 @@ void rasterize_triangle_fixed16_8(
     int32_t dbary2dx = y0 - y1;
     int32_t dbary2dy = x1 - x0;
 
-    // minimum/maximum pixel coordinates
-    uint32_t x_min_px = x_min >> 8;
-    uint32_t x_max_px = x_max >> 8;
-    uint32_t y_min_px = y_min >> 8;
-    uint32_t y_max_px = y_max >> 8;
+    // minimum/maximum pixel center coordinates (center sample locations)
+    uint32_t x_min_center = (x_min & 0xFFFFFF00) | 0x7F;
+    uint32_t x_max_center = (x_max & 0xFFFFFF00) | 0x7F;
+    uint32_t y_min_center = (y_min & 0xFFFFFF00) | 0x7F;
+    uint32_t y_max_center = (y_max & 0xFFFFFF00) | 0x7F;
 
     // these variables move forward with every y
     int32_t curr_bary0_row = min_bary0;
@@ -54,7 +61,7 @@ void rasterize_triangle_fixed16_8(
     uint32_t* curr_px_row = fb;
     
     // fill pixels inside the window coordinate bounding box that are inside all three edges' half-planes
-    for (uint32_t y_px = y_min_px; y_px <= y_max_px; y_px++)
+    for (uint32_t y_px = y_min_center; y_px <= y_max_center; y_px += 0x100)
     {
         // these variables move forward with every x
         int32_t curr_bary0 = curr_bary0_row;
@@ -63,33 +70,32 @@ void rasterize_triangle_fixed16_8(
         uint32_t* curr_px = curr_px_row;
 
         // fill pixels in this row
-        for (uint32_t x_px = x_min_px; x_px <= x_max_px; x_px++)
+        for (uint32_t x_px = x_min_center; x_px <= x_max_center; x_px += 0x100)
         {
-            // TODO: Handle top-left rule
-            if (curr_bary0 < 0 && curr_bary1 < 0 && curr_bary2 < 0)
+            if (curr_bary0 >= 0 && curr_bary1 >= 0 && curr_bary2 >= 0)
             {
-                *curr_px = 0xFFFFFF00;
+                *curr_px += g_Color;
             }
             
             // move to next pixel in x direction
-            curr_px += 1;
             curr_bary0 += dbary0dx;
             curr_bary1 += dbary1dx;
             curr_bary2 += dbary2dx;
+            curr_px += 1;
         }
 
         // move to the start of the next row
-        curr_px_row += fb_width;
         curr_bary0_row += dbary0dy;
         curr_bary1_row += dbary1dy;
         curr_bary2_row += dbary2dy;
+        curr_px_row += fb_width;
     }
 }
 
 int main()
 {
-    int fbwidth = 640;
-    int fbheight = 480;
+    int fbwidth = 256;
+    int fbheight = 256;
 
     uint32_t* fb = (uint32_t*)malloc(fbwidth * fbheight * sizeof(uint32_t));
 
@@ -99,12 +105,20 @@ int main()
         fb[i] = 0x00000000;
     }
 
-    // rasterize a triangle
+    // rasterize triangles
+    g_Color = 0xFFFFFF00;
     rasterize_triangle_fixed16_8(
         fb, fbwidth,
-        0 << 8, 0 << 8, 0 << 8,
-        0 << 8, 100 << 8, 0 << 8,
-        100 << 8, 100 << 8, 0 << 8);
+        0 << 8, 0 << 8, 0,
+        100 << 8, 100 << 8, 0,
+        0 << 8, 100 << 8, 0);
+
+    g_Color = 0xFFFF00FF;
+    rasterize_triangle_fixed16_8(
+        fb, fbwidth,
+        0 << 8, 0 << 8, 0,
+        100 << 8, 0 << 8, 0,
+        100 << 8, 100 << 8, 0);
 
     // convert framebuffer from bgra to rgba for stbi_image_write
     for (int i = 0; i < fbwidth * fbheight; i++)
