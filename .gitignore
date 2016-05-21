@@ -26,3 +26,10 @@
 *.exe
 *.out
 *.app
+
+# Visual Studio nonsense
+.vs
+x64
+*.suo
+*.db
+*.opendb
