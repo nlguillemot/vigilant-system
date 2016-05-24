@@ -66,8 +66,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="rasterizer.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="rasterizer.h" />
     <ClInclude Include="stb_image_write.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

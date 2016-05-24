@@ -2,8 +2,10 @@
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="rasterizer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stb_image_write.h" />
+    <ClInclude Include="rasterizer.h" />
   </ItemGroup>
 </Project>
