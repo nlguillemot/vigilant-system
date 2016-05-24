@@ -34,11 +34,6 @@ typedef struct framebuffer_t
     uint32_t pixels_per_tile_row;
     // number of pixels in the whole image (num_pixels_per_tile_row * num_tile_rows)
     uint32_t pixels_per_slice;
-
-    // the swizzle masks used to organize the storage of pixels within an individual tile
-    // tiles themselves are stored row-major order
-    uint32_t tile_x_swizzle_mask;
-    uint32_t tile_y_swizzle_mask;
 } framebuffer_t;
 
 framebuffer_t* new_framebuffer(uint32_t width, uint32_t height)
