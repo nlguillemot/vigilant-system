@@ -147,7 +147,7 @@ void framebuffer_pack_row_major(framebuffer_t* fb, uint32_t x, uint32_t y, uint3
                     }
                     else
                     {
-                        assert(false);
+                        assert(!"Unknown pixel format");
                     }
 
                     dst_i++;
