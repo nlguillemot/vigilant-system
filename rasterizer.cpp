@@ -23,9 +23,26 @@
 // Convenience
 #define FRAMEBUFFER_PIXELS_PER_TILE (FRAMEBUFFER_TILE_WIDTH_IN_PIXELS * FRAMEBUFFER_TILE_WIDTH_IN_PIXELS)
 
+// If there are too many commands and this buffer gets filled up,
+// then the command buffer for that tile must be flushed.
+#define TILE_COMMAND_BUFFER_SIZE_IN_DWORDS 128
+
+typedef struct tile_cmdbuf_t
+{
+    // start and past-the-end of the allocation for the buffer
+    uint32_t* cmdbuf_start;
+    uint32_t* cmdbuf_end;
+    // the next location where to read and write commands
+    uint32_t* cmdbuf_read;
+    uint32_t* cmdbuf_write;
+} tile_cmdbuf_t;
+
 typedef struct framebuffer_t
 {
     pixel_t* backbuffer;
+    
+    uint32_t* tile_cmdpool;
+    tile_cmdbuf_t* tile_cmdbufs;
     
     uint32_t width_in_pixels;
     uint32_t height_in_pixels;
@@ -52,8 +69,12 @@ framebuffer_t* new_framebuffer(uint32_t width, uint32_t height)
 
     // pad framebuffer up to size of next tile
     // that way the rasterization code doesn't have to handlep otential out of bounds access after tile binning
-    int32_t padded_width_in_pixels = (width + (FRAMEBUFFER_TILE_WIDTH_IN_PIXELS - 1)) & -FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
-    int32_t padded_height_in_pixels = (height + (FRAMEBUFFER_TILE_WIDTH_IN_PIXELS - 1)) & -FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+    uint32_t padded_width_in_pixels = (width + (FRAMEBUFFER_TILE_WIDTH_IN_PIXELS - 1)) & -FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+    uint32_t padded_height_in_pixels = (height + (FRAMEBUFFER_TILE_WIDTH_IN_PIXELS - 1)) & -FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+    
+    uint32_t width_in_tiles = padded_width_in_pixels / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+    uint32_t height_in_tiles = padded_height_in_pixels / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+    uint32_t total_num_tiles = width_in_tiles * height_in_tiles;
 
     fb->pixels_per_row_of_tiles = padded_width_in_pixels * FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
     fb->pixels_per_slice = padded_height_in_pixels / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS * fb->pixels_per_row_of_tiles;
@@ -64,6 +85,20 @@ framebuffer_t* new_framebuffer(uint32_t width, uint32_t height)
     // clear to black/transparent initially
     memset(fb->backbuffer, 0, fb->pixels_per_slice * sizeof(pixel_t));
 
+    fb->tile_cmdpool = (uint32_t*)malloc(total_num_tiles * TILE_COMMAND_BUFFER_SIZE_IN_DWORDS * sizeof(uint32_t));
+    assert(fb->tile_cmdpool);
+
+    fb->tile_cmdbufs = (tile_cmdbuf_t*)malloc(total_num_tiles * sizeof(tile_cmdbuf_t));
+    assert(fb->tile_cmdbufs);
+
+    for (uint32_t i = 0; i < total_num_tiles; i++)
+    {
+        fb->tile_cmdbufs[i].cmdbuf_start = &fb->tile_cmdpool[i * TILE_COMMAND_BUFFER_SIZE_IN_DWORDS];
+        fb->tile_cmdbufs[i].cmdbuf_end = fb->tile_cmdbufs[i].cmdbuf_start + TILE_COMMAND_BUFFER_SIZE_IN_DWORDS;
+        fb->tile_cmdbufs[i].cmdbuf_read = fb->tile_cmdbufs[i].cmdbuf_start;
+        fb->tile_cmdbufs[i].cmdbuf_write = fb->tile_cmdbufs[i].cmdbuf_start;
+    }
+
     return fb;
 }
 
@@ -72,6 +107,8 @@ void delete_framebuffer(framebuffer_t* fb)
     if (!fb)
         return;
 
+    free(fb->tile_cmdbufs);
+    free(fb->tile_cmdpool);
     free(fb->backbuffer);
     free(fb);
 }
