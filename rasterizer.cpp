@@ -4,12 +4,13 @@
 #include <string.h>
 #include <assert.h>
 
-// Fine raster works on blocks of 2x2 pixels, since NEON can fine rasterize a block in parallel using SIMD-4.
-// Coarse raster works on 2x2 blocks of fine blocks, since 4 fine blocks are processed in parallel. Therefore, 4x4 pixels per coarse block.
-// Tile raster works on 2x2 blocks of coarse blocks, since 4 coarse blocks are processed in parallel. Therefore, 8x8 pixels per tile.
+// Currently sized according to the Larrabee rasterizer's description
 #define FRAMEBUFFER_TILE_WIDTH_IN_PIXELS 128
 #define FRAMEBUFFER_COARSE_BLOCK_WIDTH_IN_PIXELS 16
 #define FRAMEBUFFER_FINE_BLOCK_WIDTH_IN_PIXELS 4
+
+// Convenience
+#define FRAMEBUFFER_PIXELS_PER_TILE (FRAMEBUFFER_TILE_WIDTH_IN_PIXELS * FRAMEBUFFER_TILE_WIDTH_IN_PIXELS)
 
 // The swizzle masks, using alternating yxyxyx bit pattern for morton-code swizzling pixels in a tile.
 // This makes the pixels morton code swizzled within every rasterization level (fine/coarse/tile)
@@ -19,9 +20,6 @@
 // https://msdn.microsoft.com/en-us/library/windows/desktop/dn770442%28v=vs.85%29.aspx
 #define FRAMEBUFFER_TILE_X_SWIZZLE_MASK (0x55555555 & (FRAMEBUFFER_TILE_WIDTH_IN_PIXELS - 1))
 #define FRAMEBUFFER_TILE_Y_SWIZZLE_MASK (~FRAMEBUFFER_TILE_X_SWIZZLE_MASK & (FRAMEBUFFER_TILE_WIDTH_IN_PIXELS - 1))
-
-// Convenience
-#define FRAMEBUFFER_PIXELS_PER_TILE (FRAMEBUFFER_TILE_WIDTH_IN_PIXELS * FRAMEBUFFER_TILE_WIDTH_IN_PIXELS)
 
 // If there are too many commands and this buffer gets filled up,
 // then the command buffer for that tile must be flushed.
