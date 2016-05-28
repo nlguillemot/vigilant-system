@@ -21,11 +21,11 @@ extern uint32_t g_Color;
 
 void draw(
     framebuffer_t* fb,
-    const uint32_t* vertices,
+    const int32_t* vertices,
     uint32_t num_vertices);
 
 void draw_indexed(
     framebuffer_t* fb,
-    const uint32_t* vertices,
+    const int32_t* vertices,
     const uint32_t* indices,
     uint32_t num_indices);

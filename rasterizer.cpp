@@ -248,26 +248,18 @@ void framebuffer_pack_row_major(framebuffer_t* fb, uint32_t x, uint32_t y, uint3
 // hack
 uint32_t g_Color;
 
-// Rasterizes a triangle with its vertices represented as 16.8 fixed point values
-// Arguments:
-// * fb: The framebuffer the triangle is written to. Pixels are assumed in BGRA format
-// * fb_width: The width in pixels of the framebuffer
-// * window_xi, window_yi (i in [0..2]): coordinate of vertex i of the triangle, encoded as 16.8 fixed point.
-// * window_zi (i in [0..2]): depth of the vertex i of the triangle.
-// Preconditions:
-// * The triangle vertices are stored clockwise (relative to their position on the display)
 void rasterize_triangle_fixed16_8(
     framebuffer_t* fb,
-    uint32_t window_x0, uint32_t window_y0, uint32_t window_z0,
-    uint32_t window_x1, uint32_t window_y1, uint32_t window_z1,
-    uint32_t window_x2, uint32_t window_y2, uint32_t window_z2)
+    int32_t window_x0, int32_t window_y0, int32_t window_z0,
+    int32_t window_x1, int32_t window_y1, int32_t window_z1,
+    int32_t window_x2, int32_t window_y2, int32_t window_z2)
 {
 
 }
 
 void draw(
     framebuffer_t* fb,
-    const uint32_t* vertices,
+    const int32_t* vertices,
     uint32_t num_vertices)
 {
     assert(fb);
@@ -276,15 +268,15 @@ void draw(
 
     for (uint32_t vertex_id = 0; vertex_id < num_vertices; vertex_id += 3)
     {
-        uint32_t x0 = vertices[vertex_id + 0 + 0];
-        uint32_t y0 = vertices[vertex_id + 0 + 1];
-        uint32_t z0 = vertices[vertex_id + 0 + 2];
-        uint32_t x1 = vertices[vertex_id + 3 + 0];
-        uint32_t y1 = vertices[vertex_id + 3 + 1];
-        uint32_t z1 = vertices[vertex_id + 3 + 2];
-        uint32_t x2 = vertices[vertex_id + 6 + 0];
-        uint32_t y2 = vertices[vertex_id + 6 + 1];
-        uint32_t z2 = vertices[vertex_id + 6 + 2];
+        int32_t x0 = vertices[vertex_id + 0 + 0];
+        int32_t y0 = vertices[vertex_id + 0 + 1];
+        int32_t z0 = vertices[vertex_id + 0 + 2];
+        int32_t x1 = vertices[vertex_id + 3 + 0];
+        int32_t y1 = vertices[vertex_id + 3 + 1];
+        int32_t z1 = vertices[vertex_id + 3 + 2];
+        int32_t x2 = vertices[vertex_id + 6 + 0];
+        int32_t y2 = vertices[vertex_id + 6 + 1];
+        int32_t z2 = vertices[vertex_id + 6 + 2];
 
         rasterize_triangle_fixed16_8(
             fb,
@@ -296,7 +288,7 @@ void draw(
 
 void draw_indexed(
     framebuffer_t* fb,
-    const uint32_t* vertices,
+    const int32_t* vertices,
     const uint32_t* indices,
     uint32_t num_indices)
 {
@@ -314,15 +306,15 @@ void draw_indexed(
         uint32_t i2 = indices[index_id + 2];
         i2 = (i2 << 1) + i2;
 
-        uint32_t x0 = vertices[i0 + 0];
-        uint32_t y0 = vertices[i0 + 1];
-        uint32_t z0 = vertices[i0 + 2];
-        uint32_t x1 = vertices[i1 + 0];
-        uint32_t y1 = vertices[i1 + 1];
-        uint32_t z1 = vertices[i1 + 2];
-        uint32_t x2 = vertices[i2 + 0];
-        uint32_t y2 = vertices[i2 + 1];
-        uint32_t z2 = vertices[i2 + 2];
+        int32_t x0 = vertices[i0 + 0];
+        int32_t y0 = vertices[i0 + 1];
+        int32_t z0 = vertices[i0 + 2];
+        int32_t x1 = vertices[i1 + 0];
+        int32_t y1 = vertices[i1 + 1];
+        int32_t z1 = vertices[i1 + 2];
+        int32_t x2 = vertices[i2 + 0];
+        int32_t y2 = vertices[i2 + 1];
+        int32_t z2 = vertices[i2 + 2];
 
         rasterize_triangle_fixed16_8(
             fb,
