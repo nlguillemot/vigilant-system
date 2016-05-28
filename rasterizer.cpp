@@ -248,12 +248,88 @@ void framebuffer_pack_row_major(framebuffer_t* fb, uint32_t x, uint32_t y, uint3
 // hack
 uint32_t g_Color;
 
+// Rasterizes a triangle with its vertices represented as 16.8 fixed point values
+// Arguments:
+// * fb: The framebuffer the triangle is written to. Pixels are assumed in BGRA format
+// * fb_width: The width in pixels of the framebuffer
+// * window_xi, window_yi (i in [0..2]): coordinate of vertex i of the triangle, encoded as 16.8 fixed point.
+// * window_zi (i in [0..2]): depth of the vertex i of the triangle.
+// Preconditions:
+// * The triangle vertices are stored clockwise (relative to their position on the display)
 void rasterize_triangle_fixed16_8(
     framebuffer_t* fb,
     uint32_t window_x0, uint32_t window_y0, uint32_t window_z0,
     uint32_t window_x1, uint32_t window_y1, uint32_t window_z1,
     uint32_t window_x2, uint32_t window_y2, uint32_t window_z2)
 {
+
+}
+
+void draw(
+    framebuffer_t* fb,
+    const uint32_t* vertices,
+    uint32_t num_vertices)
+{
+    assert(fb);
+    assert(vertices);
+    assert(num_vertices % 3 == 0);
+
+    for (uint32_t vertex_id = 0; vertex_id < num_vertices; vertex_id += 3)
+    {
+        uint32_t x0 = vertices[vertex_id + 0 + 0];
+        uint32_t y0 = vertices[vertex_id + 0 + 1];
+        uint32_t z0 = vertices[vertex_id + 0 + 2];
+        uint32_t x1 = vertices[vertex_id + 3 + 0];
+        uint32_t y1 = vertices[vertex_id + 3 + 1];
+        uint32_t z1 = vertices[vertex_id + 3 + 2];
+        uint32_t x2 = vertices[vertex_id + 6 + 0];
+        uint32_t y2 = vertices[vertex_id + 6 + 1];
+        uint32_t z2 = vertices[vertex_id + 6 + 2];
+
+        rasterize_triangle_fixed16_8(
+            fb,
+            x0, y0, z0,
+            x1, y1, z1,
+            x2, y2, z2);
+    }
+}
+
+void draw_indexed(
+    framebuffer_t* fb,
+    const uint32_t* vertices,
+    const uint32_t* indices,
+    uint32_t num_indices)
+{
+    assert(fb);
+    assert(vertices);
+    assert(indices);
+    assert(num_indices % 3 == 0);
+
+    for (uint32_t index_id = 0; index_id < num_indices; index_id += 3)
+    {
+        uint32_t i0 = indices[index_id + 0];
+        i0 = i0 + i0 + i0;
+        uint32_t i1 = indices[index_id + 1];
+        i1 = i1 + i1 + i1;
+        uint32_t i2 = indices[index_id + 2];
+        i2 = i2 + i2 + i2;
+
+        uint32_t x0 = vertices[i0 + 0];
+        uint32_t y0 = vertices[i0 + 1];
+        uint32_t z0 = vertices[i0 + 2];
+        uint32_t x1 = vertices[i1 + 0];
+        uint32_t y1 = vertices[i1 + 1];
+        uint32_t z1 = vertices[i1 + 2];
+        uint32_t x2 = vertices[i2 + 0];
+        uint32_t y2 = vertices[i2 + 1];
+        uint32_t z2 = vertices[i2 + 2];
+
+        rasterize_triangle_fixed16_8(
+            fb,
+            x0, y0, z0,
+            x1, y1, z1,
+            x2, y2, z2);
+    }
 }
 
 #ifdef RASTERIZER_UNIT_TESTS
@@ -274,7 +350,7 @@ void run_rasterizer_unit_tests()
         uint32_t h = FRAMEBUFFER_TILE_WIDTH_IN_PIXELS * 2;
         
         framebuffer_t* fb = new_framebuffer(w, h);
-        uint8_t* rowmajor_data = new uint8_t[w * h * 4];
+        uint8_t* rowmajor_data = (uint8_t*)malloc(w * h * 4);
 
         // write indices of pixels linearly in memory (ignoring swizzling)
         // this will be read back and checked to verify the layout
@@ -323,7 +399,7 @@ void run_rasterizer_unit_tests()
             }
         }
         
-        delete[] rowmajor_data;
+        free(rowmajor_data);
         delete_framebuffer(fb);
     }
 }
