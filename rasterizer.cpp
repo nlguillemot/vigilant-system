@@ -308,11 +308,11 @@ void draw_indexed(
     for (uint32_t index_id = 0; index_id < num_indices; index_id += 3)
     {
         uint32_t i0 = indices[index_id + 0];
-        i0 = i0 + i0 + i0;
+        i0 = (i0 << 1) + i0;
         uint32_t i1 = indices[index_id + 1];
-        i1 = i1 + i1 + i1;
+        i1 = (i1 << 1) + i1;
         uint32_t i2 = indices[index_id + 2];
-        i2 = i2 + i2 + i2;
+        i2 = (i2 << 1) + i2;
 
         uint32_t x0 = vertices[i0 + 0];
         uint32_t y0 = vertices[i0 + 1];
