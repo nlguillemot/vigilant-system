@@ -24,19 +24,31 @@ int main()
     framebuffer_t* fb = new_framebuffer(fbwidth, fbheight);
 
     // rasterize triangles
-    g_Color = 0xFFFFFF00;
-    rasterize_triangle_fixed16_8(
-        fb,
-        0 << 8, 0 << 8, 0,
-        100 << 8, 100 << 8, 0,
-        0 << 8, 100 << 8, 0);
+    {
+        int32_t verts[] = {
+            0 << 8, 0 << 8, 0,
+            100 << 8, 100 << 8, 0,
+            0 << 8, 100 << 8, 0
+        };
 
-    g_Color = 0xFFFF00FF;
-    rasterize_triangle_fixed16_8(
-        fb,
-        0 << 8, 0 << 8, 0,
-        100 << 8, 0 << 8, 0,
-        100 << 8, 100 << 8, 0);
+        g_Color = 0xFFFFFF00;
+        draw(fb, verts, 3);
+    }
+
+    {
+        int32_t verts[] = {
+            0 << 8, 0 << 8, 0,
+            100 << 8, 0 << 8, 0,
+            100 << 8, 100 << 8, 0
+        };
+
+        uint32_t idxs[] = {
+            0, 1, 2
+        };
+
+        g_Color = 0xFFFF00FF;
+        draw_indexed(fb, verts, idxs, 3);
+    }
 
     // make sure all caches are flushed and yada yada
     framebuffer_resolve(fb);
