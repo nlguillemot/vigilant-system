@@ -26,20 +26,20 @@ int main()
     // rasterize triangles
     {
         int32_t verts[] = {
-            0 << 8, 0 << 8, 0,
-            100 << 8, 100 << 8, 0,
-            0 << 8, 100 << 8, 0
+            0 << 8, 0 << 8, 0, 1 << 8,
+            100 << 8, 100 << 8, 0, 1 << 8,
+            0 << 8, 100 << 8, 0, 1 << 8
         };
 
         g_Color = 0xFFFFFF00;
-        draw(fb, verts, 3);
+        draw(fb, verts, sizeof(verts)/sizeof(*verts)/4);
     }
 
     {
         int32_t verts[] = {
-            0 << 8, 0 << 8, 0,
-            100 << 8, 0 << 8, 0,
-            100 << 8, 100 << 8, 0
+            0 << 8, 0 << 8, 0, 1 << 8,
+            100 << 8, 0 << 8, 0, 1 << 8,
+            100 << 8, 100 << 8, 0, 1 << 8
         };
 
         uint32_t idxs[] = {
@@ -47,7 +47,7 @@ int main()
         };
 
         g_Color = 0xFFFF00FF;
-        draw_indexed(fb, verts, idxs, 3);
+        draw_indexed(fb, verts, idxs, sizeof(idxs)/sizeof(*idxs));
     }
 
     // make sure all caches are flushed and yada yada

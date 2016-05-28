@@ -5,7 +5,9 @@
 #include <assert.h>
 #include <stdio.h>
 
+#ifdef __AVX2__
 #include <intrin.h>
+#endif
 
 // runs unit tests automatically when the library is used
 #define RASTERIZER_UNIT_TESTS
@@ -39,6 +41,9 @@ void run_rasterizer_unit_tests();
 // If there are too many commands and this buffer gets filled up,
 // then the command buffer for that tile must be flushed.
 #define TILE_COMMAND_BUFFER_SIZE_IN_DWORDS 128
+
+// width of the SIMD instruction set used
+#define SIMD_PROGRAM_COUNT 4
 
 // parallel bit deposit low-order source bits according to mask bits
 #ifdef __AVX2__
@@ -167,6 +172,8 @@ void delete_framebuffer(framebuffer_t* fb)
 void framebuffer_resolve(framebuffer_t* fb)
 {
     assert(fb);
+
+    // TODO: flush all tile command buffers
 }
 
 void framebuffer_pack_row_major(framebuffer_t* fb, uint32_t x, uint32_t y, uint32_t width, uint32_t height, pixelformat_t format, void* data)
@@ -248,13 +255,30 @@ void framebuffer_pack_row_major(framebuffer_t* fb, uint32_t x, uint32_t y, uint3
 // hack
 uint32_t g_Color;
 
-void rasterize_triangle_fixed16_8(
+void rasterize_triangle_fixed16_8_scalar(
     framebuffer_t* fb,
-    int32_t window_x0, int32_t window_y0, int32_t window_z0,
-    int32_t window_x1, int32_t window_y1, int32_t window_z1,
-    int32_t window_x2, int32_t window_y2, int32_t window_z2)
+    int32_t x0, int32_t y0, int32_t z0, int32_t w0,
+    int32_t x1, int32_t y1, int32_t z1, int32_t w1,
+    int32_t x2, int32_t y2, int32_t z2, int32_t w2)
 {
 
+}
+
+void rasterize_triangle_fixed16_8_simd4(
+    framebuffer_t* fb,
+    const int32_t* x0, const int32_t* y0, const int32_t* z0, const int32_t* w0,
+    const int32_t* x1, const int32_t* y1, const int32_t* z1, const int32_t* w1,
+    const int32_t* x2, const int32_t* y2, const int32_t* z2, const int32_t* w2)
+{
+    // shite implementation. Get scalar figured out first.
+    for (uint32_t i = 0; i < 4; i++)
+    {
+        rasterize_triangle_fixed16_8_scalar(
+            fb,
+            x0[i], y0[i], z0[i], w0[i],
+            x1[i], y1[i], z1[i], w1[i],
+            x2[i], y2[i], z2[i], w2[i]);
+    }
 }
 
 void draw(
@@ -264,25 +288,66 @@ void draw(
 {
     assert(fb);
     assert(vertices);
+
+    // assuming triangles
     assert(num_vertices % 3 == 0);
+    
+    // number of loops that can be done with SIMD and that are in groups of 3 (3 vertices per triangle)
+    uint32_t num_simd_vertices = num_vertices - (num_vertices % (SIMD_PROGRAM_COUNT * 3));
 
-    for (uint32_t vertex_id = 0; vertex_id < num_vertices; vertex_id += 3)
+    for (uint32_t vertex_id = 0; vertex_id < num_simd_vertices; vertex_id += SIMD_PROGRAM_COUNT * 3)
     {
-        int32_t x0 = vertices[vertex_id + 0 + 0];
-        int32_t y0 = vertices[vertex_id + 0 + 1];
-        int32_t z0 = vertices[vertex_id + 0 + 2];
-        int32_t x1 = vertices[vertex_id + 3 + 0];
-        int32_t y1 = vertices[vertex_id + 3 + 1];
-        int32_t z1 = vertices[vertex_id + 3 + 2];
-        int32_t x2 = vertices[vertex_id + 6 + 0];
-        int32_t y2 = vertices[vertex_id + 6 + 1];
-        int32_t z2 = vertices[vertex_id + 6 + 2];
+        int32_t x0[SIMD_PROGRAM_COUNT], y0[SIMD_PROGRAM_COUNT], z0[SIMD_PROGRAM_COUNT], w0[SIMD_PROGRAM_COUNT];
+        int32_t x1[SIMD_PROGRAM_COUNT], y1[SIMD_PROGRAM_COUNT], z1[SIMD_PROGRAM_COUNT], w1[SIMD_PROGRAM_COUNT];
+        int32_t x2[SIMD_PROGRAM_COUNT], y2[SIMD_PROGRAM_COUNT], z2[SIMD_PROGRAM_COUNT], w2[SIMD_PROGRAM_COUNT];
+        
+        for (uint32_t program_index = 0, cmpt_id = vertex_id * 4; program_index < SIMD_PROGRAM_COUNT; program_index++, cmpt_id += 12)
+        {
+            x0[program_index] = vertices[cmpt_id + 0];
+            y0[program_index] = vertices[cmpt_id + 1];
+            z0[program_index] = vertices[cmpt_id + 2];
+            w0[program_index] = vertices[cmpt_id + 3];
+            x1[program_index] = vertices[cmpt_id + 4];
+            y1[program_index] = vertices[cmpt_id + 5];
+            z1[program_index] = vertices[cmpt_id + 6];
+            w1[program_index] = vertices[cmpt_id + 7];
+            x2[program_index] = vertices[cmpt_id + 8];
+            y2[program_index] = vertices[cmpt_id + 9];
+            z2[program_index] = vertices[cmpt_id + 10];
+            w2[program_index] = vertices[cmpt_id + 11];
+        }
 
-        rasterize_triangle_fixed16_8(
+        rasterize_triangle_fixed16_8_simd4(
             fb,
-            x0, y0, z0,
-            x1, y1, z1,
-            x2, y2, z2);
+            x0, y0, z0, w0,
+            x1, y1, z1, w1,
+            x2, y2, z2, w2);
+    }
+
+    for (uint32_t vertex_id = num_simd_vertices, cmpt_id = vertex_id * 4; vertex_id < num_vertices; vertex_id += 3, cmpt_id += 12)
+    {
+        int32_t x0, y0, z0, w0;
+        int32_t x1, y1, z1, w1;
+        int32_t x2, y2, z2, w2;
+
+        x0 = vertices[cmpt_id + 0];
+        y0 = vertices[cmpt_id + 1];
+        z0 = vertices[cmpt_id + 2];
+        w0 = vertices[cmpt_id + 3];
+        x1 = vertices[cmpt_id + 4];
+        y1 = vertices[cmpt_id + 5];
+        z1 = vertices[cmpt_id + 6];
+        w1 = vertices[cmpt_id + 7];
+        x2 = vertices[cmpt_id + 8];
+        y2 = vertices[cmpt_id + 9];
+        z2 = vertices[cmpt_id + 10];
+        w2 = vertices[cmpt_id + 11];
+
+        rasterize_triangle_fixed16_8_scalar(
+            fb,
+            x0, y0, z0, w0,
+            x1, y1, z1, w1,
+            x2, y2, z2, w2);
     }
 }
 
@@ -297,30 +362,70 @@ void draw_indexed(
     assert(indices);
     assert(num_indices % 3 == 0);
 
-    for (uint32_t index_id = 0; index_id < num_indices; index_id += 3)
+    // number of loops that can be done with SIMD and that are in groups of 3 (3 indices per triangle)
+    uint32_t num_simd_indices = num_indices - (num_indices % (SIMD_PROGRAM_COUNT * 3));
+
+    for (uint32_t index_id = 0; index_id < num_simd_indices; index_id += SIMD_PROGRAM_COUNT * 3)
     {
-        uint32_t i0 = indices[index_id + 0];
-        i0 = (i0 << 1) + i0;
-        uint32_t i1 = indices[index_id + 1];
-        i1 = (i1 << 1) + i1;
-        uint32_t i2 = indices[index_id + 2];
-        i2 = (i2 << 1) + i2;
+        int32_t x0[SIMD_PROGRAM_COUNT], y0[SIMD_PROGRAM_COUNT], z0[SIMD_PROGRAM_COUNT], w0[SIMD_PROGRAM_COUNT];
+        int32_t x1[SIMD_PROGRAM_COUNT], y1[SIMD_PROGRAM_COUNT], z1[SIMD_PROGRAM_COUNT], w1[SIMD_PROGRAM_COUNT];
+        int32_t x2[SIMD_PROGRAM_COUNT], y2[SIMD_PROGRAM_COUNT], z2[SIMD_PROGRAM_COUNT], w2[SIMD_PROGRAM_COUNT];
 
-        int32_t x0 = vertices[i0 + 0];
-        int32_t y0 = vertices[i0 + 1];
-        int32_t z0 = vertices[i0 + 2];
-        int32_t x1 = vertices[i1 + 0];
-        int32_t y1 = vertices[i1 + 1];
-        int32_t z1 = vertices[i1 + 2];
-        int32_t x2 = vertices[i2 + 0];
-        int32_t y2 = vertices[i2 + 1];
-        int32_t z2 = vertices[i2 + 2];
+        for (uint32_t program_index = 0, cmpt_id = index_id; program_index < SIMD_PROGRAM_COUNT; program_index++, cmpt_id += 3)
+        {
+            uint32_t cmpt_i0 = indices[cmpt_id + 0] * 4;
+            uint32_t cmpt_i1 = indices[cmpt_id + 1] * 4;
+            uint32_t cmpt_i2 = indices[cmpt_id + 2] * 4;
 
-        rasterize_triangle_fixed16_8(
+            x0[program_index] = vertices[cmpt_i0 + 0];
+            y0[program_index] = vertices[cmpt_i0 + 1];
+            z0[program_index] = vertices[cmpt_i0 + 2];
+            w0[program_index] = vertices[cmpt_i0 + 3];
+            x1[program_index] = vertices[cmpt_i1 + 0];
+            y1[program_index] = vertices[cmpt_i1 + 1];
+            z1[program_index] = vertices[cmpt_i1 + 2];
+            w1[program_index] = vertices[cmpt_i1 + 3];
+            x2[program_index] = vertices[cmpt_i2 + 0];
+            y2[program_index] = vertices[cmpt_i2 + 1];
+            z2[program_index] = vertices[cmpt_i2 + 2];
+            w2[program_index] = vertices[cmpt_i2 + 3];
+        }
+
+        rasterize_triangle_fixed16_8_simd4(
             fb,
-            x0, y0, z0,
-            x1, y1, z1,
-            x2, y2, z2);
+            x0, y0, z0, w0,
+            x1, y1, z1, w1,
+            x2, y2, z2, w2);
+    }
+
+    for (uint32_t index_id = num_simd_indices; index_id < num_indices; index_id += 3)
+    {
+        int32_t x0, y0, z0, w0;
+        int32_t x1, y1, z1, w1;
+        int32_t x2, y2, z2, w2;
+
+        uint32_t cmpt_i0 = indices[index_id + 0] * 4;
+        uint32_t cmpt_i1 = indices[index_id + 1] * 4;
+        uint32_t cmpt_i2 = indices[index_id + 2] * 4;
+
+        x0 = vertices[cmpt_i0 + 0];
+        y0 = vertices[cmpt_i0 + 1];
+        z0 = vertices[cmpt_i0 + 2];
+        w0 = vertices[cmpt_i0 + 3];
+        x1 = vertices[cmpt_i1 + 0];
+        y1 = vertices[cmpt_i1 + 1];
+        z1 = vertices[cmpt_i1 + 2];
+        w1 = vertices[cmpt_i1 + 3];
+        x2 = vertices[cmpt_i2 + 0];
+        y2 = vertices[cmpt_i2 + 1];
+        z2 = vertices[cmpt_i2 + 2];
+        w2 = vertices[cmpt_i2 + 3];
+
+        rasterize_triangle_fixed16_8_scalar(
+            fb,
+            x0, y0, z0, w0,
+            x1, y1, z1, w1,
+            x2, y2, z2, w2);
     }
 }
 
@@ -328,13 +433,15 @@ void draw_indexed(
 void run_rasterizer_unit_tests()
 {
     // pdep tests
-    //             source  mask
-    assert(pdep_u32(0b000, 0b000000) == 0b000000);
-    assert(pdep_u32(0b001, 0b000001) == 0b000001);
-    assert(pdep_u32(0b001, 0b000010) == 0b000010);
-    assert(pdep_u32(0b011, 0b001100) == 0b001100);
-    assert(pdep_u32(0b101, 0b101010) == 0b100010);
-    assert(pdep_u32(0b010, 0b010101) == 0b000100);
+    {
+        //             source  mask
+        assert(pdep_u32(0b000, 0b000000) == 0b000000);
+        assert(pdep_u32(0b001, 0b000001) == 0b000001);
+        assert(pdep_u32(0b001, 0b000010) == 0b000010);
+        assert(pdep_u32(0b011, 0b001100) == 0b001100);
+        assert(pdep_u32(0b101, 0b101010) == 0b100010);
+        assert(pdep_u32(0b010, 0b010101) == 0b000100);
+    }
 
     // swizzle test
     {
