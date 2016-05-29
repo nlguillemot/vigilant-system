@@ -1,12 +1,3 @@
-// This program implements a Pineda-style software rasterizer inspired from Larrabee's rasterizer.
-// See "A Parallel Algorithm for Polygon Rasterization", by Juan Pineda, SIGGRAPH '88:
-// http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.157.4621&rep=rep1&type=pdf
-// For a modern take on this algorithm, see Fabian Giesen's GPU pipeline and Software Occlusion Culling blog series:
-// https://fgiesen.wordpress.com/2011/07/09/a-trip-through-the-graphics-pipeline-2011-index/
-// https://fgiesen.wordpress.com/2013/02/17/optimizing-sw-occlusion-culling-index/
-// Another modern take is Michael Abrash's Dr. Dobb's article "Rasterization on Larrabee":
-// http://www.drdobbs.com/parallel/rasterization-on-larrabee/217200602
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>

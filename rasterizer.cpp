@@ -1,3 +1,12 @@
+// This library implements a Pineda-style software rasterizer inspired from Larrabee's rasterizer.
+// See "A Parallel Algorithm for Polygon Rasterization", by Juan Pineda, SIGGRAPH '88:
+// http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.157.4621&rep=rep1&type=pdf
+// Also see Michael Abrash's article "Rasterization on Larrabee":
+// https://software.intel.com/en-us/articles/rasterization-on-larrabee
+// For a modern take on this algorithm, see Fabian Giesen's GPU pipeline and Software Occlusion Culling blog series:
+// https://fgiesen.wordpress.com/2011/07/09/a-trip-through-the-graphics-pipeline-2011-index/
+// https://fgiesen.wordpress.com/2013/02/17/optimizing-sw-occlusion-culling-index/
+
 #include "rasterizer.h"
 
 #include <stdlib.h>
@@ -81,6 +90,19 @@ typedef struct tile_cmdbuf_t
     uint32_t* cmdbuf_write;
 } tile_cmdbuf_t;
 
+typedef enum tilecmd_id_t
+{
+    tilecmd_id_drawsmalltri
+} tilecmd_id_t;
+
+typedef struct tilecmd_drawsmalltri_t
+{
+    uint32_t tilecmd_id;
+    int32_t x0, y0, z0, w0;
+    int32_t x1, y1, z1, w1;
+    int32_t x2, y2, z2, w2;
+} tilecmd_drawsmalltri_t;
+
 typedef struct framebuffer_t
 {
     pixel_t* backbuffer;
@@ -90,6 +112,10 @@ typedef struct framebuffer_t
     
     uint32_t width_in_pixels;
     uint32_t height_in_pixels;
+
+    uint32_t width_in_tiles;
+    uint32_t height_in_tiles;
+    uint32_t total_num_tiles;
     
     // num_tiles_per_row * num_pixels_per_tile
     uint32_t pixels_per_row_of_tiles;
@@ -126,9 +152,9 @@ framebuffer_t* new_framebuffer(uint32_t width, uint32_t height)
     uint32_t padded_width_in_pixels = (width + (FRAMEBUFFER_TILE_WIDTH_IN_PIXELS - 1)) & -FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
     uint32_t padded_height_in_pixels = (height + (FRAMEBUFFER_TILE_WIDTH_IN_PIXELS - 1)) & -FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
     
-    uint32_t width_in_tiles = padded_width_in_pixels / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
-    uint32_t height_in_tiles = padded_height_in_pixels / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
-    uint32_t total_num_tiles = width_in_tiles * height_in_tiles;
+    fb->width_in_tiles = padded_width_in_pixels / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+    fb->height_in_tiles = padded_height_in_pixels / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+    fb->total_num_tiles = fb->width_in_tiles * fb->height_in_tiles;
 
     fb->pixels_per_row_of_tiles = padded_width_in_pixels * FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
     fb->pixels_per_slice = padded_height_in_pixels / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS * fb->pixels_per_row_of_tiles;
@@ -140,14 +166,14 @@ framebuffer_t* new_framebuffer(uint32_t width, uint32_t height)
     memset(fb->backbuffer, 0, fb->pixels_per_slice * sizeof(pixel_t));
 
     // allocate command lists for each tile
-    fb->tile_cmdpool = (uint32_t*)malloc(total_num_tiles * TILE_COMMAND_BUFFER_SIZE_IN_DWORDS * sizeof(uint32_t));
+    fb->tile_cmdpool = (uint32_t*)malloc(fb->total_num_tiles * TILE_COMMAND_BUFFER_SIZE_IN_DWORDS * sizeof(uint32_t));
     assert(fb->tile_cmdpool);
 
-    fb->tile_cmdbufs = (tile_cmdbuf_t*)malloc(total_num_tiles * sizeof(tile_cmdbuf_t));
+    fb->tile_cmdbufs = (tile_cmdbuf_t*)malloc(fb->total_num_tiles * sizeof(tile_cmdbuf_t));
     assert(fb->tile_cmdbufs);
 
     // command lists are circular queues that are initially empty
-    for (uint32_t i = 0; i < total_num_tiles; i++)
+    for (uint32_t i = 0; i < fb->total_num_tiles; i++)
     {
         fb->tile_cmdbufs[i].cmdbuf_start = &fb->tile_cmdpool[i * TILE_COMMAND_BUFFER_SIZE_IN_DWORDS];
         fb->tile_cmdbufs[i].cmdbuf_end = fb->tile_cmdbufs[i].cmdbuf_start + TILE_COMMAND_BUFFER_SIZE_IN_DWORDS;
@@ -167,6 +193,11 @@ void delete_framebuffer(framebuffer_t* fb)
     free(fb->tile_cmdpool);
     free(fb->backbuffer);
     free(fb);
+}
+
+static void framebuffer_push_tilecmd(framebuffer_t* fb, uint32_t tile_id, const uint32_t* cmd_dwords, uint32_t num_dwords)
+{
+
 }
 
 void framebuffer_resolve(framebuffer_t* fb)
@@ -261,7 +292,110 @@ void rasterize_triangle_fixed16_8_scalar(
     int32_t x1, int32_t y1, int32_t z1, int32_t w1,
     int32_t x2, int32_t y2, int32_t z2, int32_t w2)
 {
+    // get window coordinates bounding box
+    int32_t bbox_min_x = x0;
+    if (x1 < bbox_min_x) bbox_min_x = x1;
+    if (x2 < bbox_min_x) bbox_min_x = x2;
+    int32_t bbox_max_x = x0;
+    if (x1 > bbox_max_x) bbox_max_x = x1;
+    if (x2 > bbox_max_x) bbox_max_x = x2;
+    int32_t bbox_min_y = y0;
+    if (y1 < bbox_min_y) bbox_min_y = y1;
+    if (y2 < bbox_min_y) bbox_min_y = y2;
+    int32_t bbox_max_y = y0;
+    if (y1 > bbox_max_y) bbox_max_y = y1;
+    if (y2 > bbox_max_y) bbox_max_y = y2;
 
+    // clip triangles that are fully outside the scissor rect (scissor rect = whole window)
+    if (bbox_max_x < 0 ||
+        bbox_max_y < 0 ||
+        bbox_min_x >= (fb->width_in_pixels << 8) ||
+        bbox_min_y >= (fb->height_in_pixels << 8))
+    {
+        return;
+    }
+
+    // clip bbox to scissor rect
+    if (bbox_min_x < 0) bbox_min_x = 0;
+    if (bbox_min_y < 0) bbox_min_y = 0;
+    if (bbox_max_x >= (fb->width_in_pixels << 8)) bbox_max_x = fb->width_in_pixels << 8;
+    if (bbox_max_y >= (fb->height_in_pixels << 8)) bbox_max_y = fb->height_in_pixels << 8;
+
+    // "small" triangles are no wider than a tile.
+    int32_t is_large =
+        (bbox_max_x - bbox_min_x) >= FRAMEBUFFER_TILE_WIDTH_IN_PIXELS ||
+        (bbox_max_y - bbox_min_y) >= FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+
+    if (!is_large)
+    {
+        // since this is a small triangle, that means the triangle is smaller than a tile.
+        // that means it can overlap at most 2x2 adjacent tiles if it's in the middle of all of them.
+        // just need to figure out which boxes are overlapping the triangle's bbox
+        uint32_t first_tile_x = (bbox_min_x >> 8) / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+        uint32_t first_tile_y = (bbox_min_y >> 8) / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+        uint32_t last_tile_x = (bbox_max_x >> 8) / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+        uint32_t last_tile_y = (bbox_max_y >> 8) / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+
+        tilecmd_drawsmalltri_t drawsmalltricmd;
+        drawsmalltricmd.tilecmd_id = tilecmd_id_drawsmalltri;
+        drawsmalltricmd.x0 = x0;
+        drawsmalltricmd.x1 = x1;
+        drawsmalltricmd.x2 = x2;
+        drawsmalltricmd.y0 = y0;
+        drawsmalltricmd.y1 = y1;
+        drawsmalltricmd.y2 = y2;
+        drawsmalltricmd.z0 = z0;
+        drawsmalltricmd.z1 = z1;
+        drawsmalltricmd.z2 = z2;
+        drawsmalltricmd.w0 = w0;
+        drawsmalltricmd.w1 = w1;
+        drawsmalltricmd.w2 = w2;
+
+        uint32_t first_tile_id = first_tile_y * fb->width_in_tiles + first_tile_x;
+        framebuffer_push_tilecmd(fb, first_tile_id, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
+
+        if (last_tile_x > first_tile_x)
+        {
+            uint32_t tile_id_right = first_tile_id + 1;
+            framebuffer_push_tilecmd(fb, tile_id_right, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
+        }
+
+        if (last_tile_y > first_tile_y)
+        {
+            uint32_t tile_id_down = first_tile_id + fb->width_in_tiles;
+            framebuffer_push_tilecmd(fb, tile_id_down, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
+        }
+
+        if (last_tile_x > first_tile_x && last_tile_y > first_tile_y)
+        {
+            uint32_t tile_id_downright = first_tile_id + 1 + fb->width_in_tiles;
+            framebuffer_push_tilecmd(fb, tile_id_downright, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
+        }
+    }
+    else
+    {
+        // for large triangles, test each tile in their bbox for overlap
+        // done using scalar code for simplicity, since rasterization dominates large triangle performance anyways.
+        uint32_t first_tile_x = (bbox_min_x >> 8) / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+        uint32_t first_tile_y = (bbox_min_y >> 8) / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+        uint32_t last_tile_x = (bbox_max_x >> 8) / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+        uint32_t last_tile_y = (bbox_max_y >> 8) / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+
+        uint32_t tile_row_start = first_tile_y * fb->width_in_tiles;
+        for (uint32_t tile_y = first_tile_y; tile_y <= last_tile_y; tile_y++)
+        {
+            uint32_t tile_i = tile_row_start;
+
+            for (uint32_t tile_x = first_tile_x; tile_x <= last_tile_x; tile_x++)
+            {
+
+
+                tile_i++;
+            }
+
+            tile_row_start += fb->width_in_tiles;
+        }
+    }
 }
 
 void rasterize_triangle_fixed16_8_simd4(
