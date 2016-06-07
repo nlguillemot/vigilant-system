@@ -26,6 +26,9 @@ void run_rasterizer_unit_tests();
 #endif
 
 // Sized according to the Larrabee rasterizer's description
+// The tile size must be up to 128x128
+//    this is because any edge that isn't trivially accepted or rejected
+//    can be rasterized with 32 bits inside a 128x128 tile
 #define FRAMEBUFFER_TILE_WIDTH_IN_PIXELS 128
 #define FRAMEBUFFER_COARSE_BLOCK_WIDTH_IN_PIXELS 16
 #define FRAMEBUFFER_FINE_BLOCK_WIDTH_IN_PIXELS 4
@@ -92,7 +95,11 @@ typedef struct tile_cmdbuf_t
 
 typedef enum tilecmd_id_t
 {
-    tilecmd_id_drawsmalltri
+    tilecmd_id_drawsmalltri,
+    tilecmd_id_drawtile_0edge,
+    tilecmd_id_drawtile_1edge,
+    tilecmd_id_drawtile_2edge,
+    tilecmd_id_drawtile_3edge,
 } tilecmd_id_t;
 
 typedef struct tilecmd_drawsmalltri_t
@@ -102,6 +109,26 @@ typedef struct tilecmd_drawsmalltri_t
     int32_t x1, y1, z1, w1;
     int32_t x2, y2, z2, w2;
 } tilecmd_drawsmalltri_t;
+
+typedef struct tilecmd_drawtile_0edge_t
+{
+    uint32_t tilecmd_id;
+} tilecmd_drawtile_0edge_t;
+
+typedef struct tilecmd_drawtile_1edge_t
+{
+    uint32_t tilecmd_id;
+} tilecmd_drawtile_1edge_t;
+
+typedef struct tilecmd_drawtile_2edge_t
+{
+    uint32_t tilecmd_id;
+} tilecmd_drawtile_2edge_t;
+
+typedef struct tilecmd_drawtile_3edge_t
+{
+    uint32_t tilecmd_id;
+} tilecmd_drawtile_3edge_t;
 
 typedef struct framebuffer_t
 {
@@ -286,7 +313,7 @@ void framebuffer_pack_row_major(framebuffer_t* fb, uint32_t x, uint32_t y, uint3
 // hack
 uint32_t g_Color;
 
-void rasterize_triangle_fixed16_8_scalar(
+static void rasterize_triangle_fixed16_8_scalar(
     framebuffer_t* fb,
     int32_t x0, int32_t y0, int32_t z0, int32_t w0,
     int32_t x1, int32_t y1, int32_t z1, int32_t w1,
@@ -381,24 +408,119 @@ void rasterize_triangle_fixed16_8_scalar(
         uint32_t last_tile_x = (bbox_max_x >> 8) / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
         uint32_t last_tile_y = (bbox_max_y >> 8) / FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
 
+        // evaluate edge equation at the top left tile
+        uint32_t first_tile_px_x = first_tile_x * FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+        uint32_t first_tile_px_y = first_tile_y * FRAMEBUFFER_TILE_WIDTH_IN_PIXELS;
+
+        // 64 bit integers are used for the edge equations here because multiplying two 16.8 numbers requires up to 48 bits
+        // this results in some extra overhead, but it's not a big deal when you consider that this happens only for large triangles.
+        // The tens of thousands of pixels that large triangles generate outweigh the cost of slightly more expensive setup.
+
+        // |  x  y  z |
+        // | ax ay  0 |
+        // | bx by  0 |
+        // = ax*by - ay*bx
+        // eg: a = (v1-v0), b = (px-v0)
+        int64_t edge0 = (int64_t)(x1 - x0) * (first_tile_px_y - y0) - (int64_t)(y1 - y0) * (first_tile_px_x - x0);
+        int64_t edge1 = (int64_t)(x2 - x1) * (first_tile_px_y - y1) - (int64_t)(y2 - y1) * (first_tile_px_x - x1);
+        int64_t edge2 = (int64_t)(x0 - x2) * (first_tile_px_y - y2) - (int64_t)(y0 - y2) * (first_tile_px_x - x2);
+
+        // Top-left rule: shift non top-left edges ever so slightly inward
+        if ((y0 != y1 || x0 >= x1) && y1 >= y0) edge0++;
+        if ((y1 != y2 || x1 >= x2) && y2 >= y1) edge1++;
+        if ((y2 != y0 || x2 >= x0) && y0 >= y2) edge2++;
+
+        // offset the edge equations so they can be used to do a trivial reject test
+        // this means finding the corner of the first tile that is the most negative (the "most inside") the triangle
+        int32_t edge0_dx = y0 - y1;
+        int32_t edge0_dy = x1 - x0;
+        int32_t edge1_dx = y1 - y2;
+        int32_t edge1_dy = x2 - x1;
+        int32_t edge2_dx = y0 - y2;
+        int32_t edge2_dy = x0 - x2;
+
+        int64_t edge0_trivRej = edge0;
+        int64_t edge0_trivAcc = edge0;
+        if (edge0_dx < 0) edge0_trivRej += edge0_dx;
+        if (edge0_dx > 0) edge0_trivAcc += edge0_dx;
+        if (edge0_dy < 0) edge0_trivRej += edge0_dy;
+        if (edge0_dy > 0) edge0_trivAcc += edge0_dy;
+        
+        int64_t edge1_trivRej = edge1;
+        int64_t edge1_trivAcc = edge1;
+        if (edge1_dx < 0) edge1_trivRej += edge1_dx;
+        if (edge1_dx > 0) edge1_trivAcc += edge1_dx;
+        if (edge1_dy < 0) edge1_trivRej += edge1_dy;
+        if (edge1_dy > 0) edge1_trivAcc += edge1_dy;
+
+        int64_t edge2_trivRej = edge2;
+        int64_t edge2_trivAcc = edge2;
+        if (edge2_dx < 0) edge2_trivRej += edge2_dx;
+        if (edge2_dx > 0) edge2_trivAcc += edge2_dx;
+        if (edge2_dy < 0) edge2_trivRej += edge2_dy;
+        if (edge2_dy > 0) edge2_trivAcc += edge2_dy;
+
         uint32_t tile_row_start = first_tile_y * fb->width_in_tiles;
         for (uint32_t tile_y = first_tile_y; tile_y <= last_tile_y; tile_y++)
         {
             uint32_t tile_i = tile_row_start;
+            int64_t tile_i_edge0_trivRej = edge0_trivRej;
+            int64_t tile_i_edge1_trivRej = edge1_trivRej;
+            int64_t tile_i_edge2_trivRej = edge2_trivRej;
+            int64_t tile_i_edge0_trivAcc = edge0_trivAcc;
+            int64_t tile_i_edge1_trivAcc = edge1_trivAcc;
+            int64_t tile_i_edge2_trivAcc = edge2_trivAcc;
 
             for (uint32_t tile_x = first_tile_x; tile_x <= last_tile_x; tile_x++)
             {
+                if (tile_i_edge0_trivRej >= 0 || tile_i_edge1_trivRej >= 0 || tile_i_edge2_trivRej >= 0)
+                {
+                    // tile trivially rejected because at least one edge doesn't cover the tile at all
+                    continue;
+                }
 
+                tilecmd_drawtile_3edge_t drawtilecmd;
+                drawtilecmd.tilecmd_id = tilecmd_id_drawtile_0edge;
+                uint32_t num_cmd_dwords = 1;
+                
+                if (tile_i_edge0_trivAcc >= 0)
+                {
+                    drawtilecmd.tilecmd_id++;
+                }
+
+                if (tile_i_edge1_trivAcc >= 0)
+                {
+                    drawtilecmd.tilecmd_id++;
+                }
+
+                if (tile_i_edge2_trivAcc >= 0)
+                {
+                    drawtilecmd.tilecmd_id++;
+                }
+
+                framebuffer_push_tilecmd(fb, tile_i, &drawtilecmd.tilecmd_id, num_cmd_dwords);
 
                 tile_i++;
+                tile_i_edge0_trivRej += edge0_dx;
+                tile_i_edge1_trivRej += edge1_dx;
+                tile_i_edge2_trivRej += edge2_dx;
+                tile_i_edge0_trivAcc += edge0_dx;
+                tile_i_edge1_trivAcc += edge1_dx;
+                tile_i_edge2_trivAcc += edge2_dx;
             }
 
             tile_row_start += fb->width_in_tiles;
+            edge0_trivRej += edge0_dy;
+            edge1_trivRej += edge1_dy;
+            edge2_trivRej += edge2_dy;
+            edge0_trivAcc += edge0_dy;
+            edge1_trivAcc += edge1_dy;
+            edge2_trivAcc += edge2_dy;
         }
     }
 }
 
-void rasterize_triangle_fixed16_8_simd4(
+static void rasterize_triangle_fixed16_8_simd4(
     framebuffer_t* fb,
     const int32_t* x0, const int32_t* y0, const int32_t* z0, const int32_t* w0,
     const int32_t* x1, const int32_t* y1, const int32_t* z1, const int32_t* w1,
