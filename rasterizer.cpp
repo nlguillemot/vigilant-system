@@ -103,23 +103,22 @@ typedef enum tilecmd_id_t
     tilecmd_id_drawtile_3edge,
 } tilecmd_id_t;
 
+typedef struct xyzw_i32_t
+{
+    int32_t x, y, z, w;
+} xyzw_i32_t;
+
 typedef struct tilecmd_drawsmalltri_t
 {
     uint32_t tilecmd_id;
-    int32_t x0, y0, z0, w0;
-    int32_t x1, y1, z1, w1;
-    int32_t x2, y2, z2, w2;
+    xyzw_i32_t verts[3];
 } tilecmd_drawsmalltri_t;
 
 typedef struct tilecmd_drawtile_t
 {
     uint32_t tilecmd_id;
-    int32_t x0, y0, z0, w0;
-    int32_t x1, y1, z1, w1;
-    int32_t x2, y2, z2, w2;
-    int32_t tile_topleft_edge0;
-    int32_t tile_topleft_edge1;
-    int32_t tile_topleft_edge2;
+    xyzw_i32_t verts[3];
+    int32_t edges[3];
 } tilecmd_drawtile_0edge_t;
 
 typedef struct framebuffer_t
@@ -360,29 +359,27 @@ void framebuffer_pack_row_major(framebuffer_t* fb, uint32_t x, uint32_t y, uint3
 
 static void rasterize_triangle_fixed16_8_scalar(
     framebuffer_t* fb,
-    int32_t x0, int32_t y0, int32_t z0, int32_t w0,
-    int32_t x1, int32_t y1, int32_t z1, int32_t w1,
-    int32_t x2, int32_t y2, int32_t z2, int32_t w2)
+    xyzw_i32_t verts[3])
 {
     // get window coordinates bounding box
-    int32_t bbox_min_x = x0;
-    if (x1 < bbox_min_x) bbox_min_x = x1;
-    if (x2 < bbox_min_x) bbox_min_x = x2;
-    int32_t bbox_max_x = x0;
-    if (x1 > bbox_max_x) bbox_max_x = x1;
-    if (x2 > bbox_max_x) bbox_max_x = x2;
-    int32_t bbox_min_y = y0;
-    if (y1 < bbox_min_y) bbox_min_y = y1;
-    if (y2 < bbox_min_y) bbox_min_y = y2;
-    int32_t bbox_max_y = y0;
-    if (y1 > bbox_max_y) bbox_max_y = y1;
-    if (y2 > bbox_max_y) bbox_max_y = y2;
+    int32_t bbox_min_x = verts[0].x;
+    if (verts[1].x < bbox_min_x) bbox_min_x = verts[1].x;
+    if (verts[2].x < bbox_min_x) bbox_min_x = verts[2].x;
+    int32_t bbox_max_x = verts[0].x;
+    if (verts[1].x > bbox_max_x) bbox_max_x = verts[1].x;
+    if (verts[2].x > bbox_max_x) bbox_max_x = verts[2].x;
+    int32_t bbox_min_y = verts[0].y;
+    if (verts[1].y < bbox_min_y) bbox_min_y = verts[1].y;
+    if (verts[2].y < bbox_min_y) bbox_min_y = verts[2].y;
+    int32_t bbox_max_y = verts[0].y;
+    if (verts[1].y > bbox_max_y) bbox_max_y = verts[1].y;
+    if (verts[2].y > bbox_max_y) bbox_max_y = verts[2].y;
 
     // clip triangles that are fully outside the scissor rect (scissor rect = whole window)
     if (bbox_max_x < 0 ||
         bbox_max_y < 0 ||
-        bbox_min_x >= (fb->width_in_pixels << 8) ||
-        bbox_min_y >= (fb->height_in_pixels << 8))
+        bbox_min_x >= (int32_t)(fb->width_in_pixels << 8) ||
+        bbox_min_y >= (int32_t)(fb->height_in_pixels << 8))
     {
         return;
     }
@@ -390,8 +387,8 @@ static void rasterize_triangle_fixed16_8_scalar(
     // clip bbox to scissor rect
     if (bbox_min_x < 0) bbox_min_x = 0;
     if (bbox_min_y < 0) bbox_min_y = 0;
-    if (bbox_max_x >= (fb->width_in_pixels << 8)) bbox_max_x = fb->width_in_pixels << 8;
-    if (bbox_max_y >= (fb->height_in_pixels << 8)) bbox_max_y = fb->height_in_pixels << 8;
+    if (bbox_max_x >= (int32_t)(fb->width_in_pixels << 8)) bbox_max_x = (int32_t)fb->width_in_pixels << 8;
+    if (bbox_max_y >= (int32_t)(fb->height_in_pixels << 8)) bbox_max_y = (int32_t)fb->height_in_pixels << 8;
 
     // "small" triangles are no wider than a tile.
     int32_t is_large =
@@ -410,18 +407,9 @@ static void rasterize_triangle_fixed16_8_scalar(
 
         tilecmd_drawsmalltri_t drawsmalltricmd;
         drawsmalltricmd.tilecmd_id = tilecmd_id_drawsmalltri;
-        drawsmalltricmd.x0 = x0;
-        drawsmalltricmd.x1 = x1;
-        drawsmalltricmd.x2 = x2;
-        drawsmalltricmd.y0 = y0;
-        drawsmalltricmd.y1 = y1;
-        drawsmalltricmd.y2 = y2;
-        drawsmalltricmd.z0 = z0;
-        drawsmalltricmd.z1 = z1;
-        drawsmalltricmd.z2 = z2;
-        drawsmalltricmd.w0 = w0;
-        drawsmalltricmd.w1 = w1;
-        drawsmalltricmd.w2 = w2;
+        drawsmalltricmd.verts[0] = verts[0];
+        drawsmalltricmd.verts[1] = verts[1];
+        drawsmalltricmd.verts[2] = verts[2];
 
         uint32_t first_tile_id = first_tile_y * fb->width_in_tiles + first_tile_x;
         framebuffer_push_tilecmd(fb, first_tile_id, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
@@ -466,62 +454,57 @@ static void rasterize_triangle_fixed16_8_scalar(
         // | bx by  0 |
         // = ax*by - ay*bx
         // eg: a = (v1-v0), b = (px-v0)
-        int64_t edge0 = ((int64_t)(x1 - x0) * (first_tile_px_y - y0) - (int64_t)(y1 - y0) * (first_tile_px_x - x0)) >> 8;
-        int64_t edge1 = ((int64_t)(x2 - x1) * (first_tile_px_y - y1) - (int64_t)(y2 - y1) * (first_tile_px_x - x1)) >> 8;
-        int64_t edge2 = ((int64_t)(x0 - x2) * (first_tile_px_y - y2) - (int64_t)(y0 - y2) * (first_tile_px_x - x2)) >> 8;
+        int64_t edges[3];
+        edges[0] = ((int64_t)(verts[1].x - verts[0].x) * (first_tile_px_y - verts[0].y) - (int64_t)(verts[1].y - verts[0].y) * (first_tile_px_x - verts[0].x)) >> 8;
+        edges[1] = ((int64_t)(verts[2].x - verts[1].x) * (first_tile_px_y - verts[1].y) - (int64_t)(verts[2].y - verts[1].y) * (first_tile_px_x - verts[1].x)) >> 8;
+        edges[2] = ((int64_t)(verts[0].x - verts[2].x) * (first_tile_px_y - verts[2].y) - (int64_t)(verts[0].y - verts[2].y) * (first_tile_px_x - verts[2].x)) >> 8;
 
         // Top-left rule: shift non top-left edges ever so slightly inward
-        if ((y0 != y1 || x0 >= x1) && y1 >= y0) edge0++;
-        if ((y1 != y2 || x1 >= x2) && y2 >= y1) edge1++;
-        if ((y2 != y0 || x2 >= x0) && y0 >= y2) edge2++;
+        if ((verts[0].y != verts[1].y || verts[0].x >= verts[1].x) && verts[1].y >= verts[0].y) edges[0]++;
+        if ((verts[1].y != verts[2].y || verts[1].x >= verts[2].x) && verts[2].y >= verts[1].y) edges[1]++;
+        if ((verts[2].y != verts[0].y || verts[2].x >= verts[0].x) && verts[0].y >= verts[2].y) edges[2]++;
 
         // offset the edge equations so they can be used to do a trivial reject test
         // this means finding the corner of the first tile that is the most negative (the "most inside") the triangle
-        int32_t edge0_dx = y0 - y1;
-        int32_t edge0_dy = x1 - x0;
-        int32_t edge1_dx = y1 - y2;
-        int32_t edge1_dy = x2 - x1;
-        int32_t edge2_dx = y0 - y2;
-        int32_t edge2_dy = x0 - x2;
+        int32_t edge_dxs[3], edge_dys[3];
+        edge_dxs[0] = verts[0].y - verts[1].y;
+        edge_dys[0] = verts[1].x - verts[0].x;
+        edge_dxs[1] = verts[1].y - verts[2].y;
+        edge_dys[1] = verts[2].x - verts[1].x;
+        edge_dxs[2] = verts[0].y - verts[2].y;
+        edge_dys[2] = verts[0].x - verts[2].x;
 
-        int64_t edge0_trivRej = edge0;
-        int64_t edge0_trivAcc = edge0;
-        if (edge0_dx < 0) edge0_trivRej += edge0_dx;
-        if (edge0_dx > 0) edge0_trivAcc += edge0_dx;
-        if (edge0_dy < 0) edge0_trivRej += edge0_dy;
-        if (edge0_dy > 0) edge0_trivAcc += edge0_dy;
-        
-        int64_t edge1_trivRej = edge1;
-        int64_t edge1_trivAcc = edge1;
-        if (edge1_dx < 0) edge1_trivRej += edge1_dx;
-        if (edge1_dx > 0) edge1_trivAcc += edge1_dx;
-        if (edge1_dy < 0) edge1_trivRej += edge1_dy;
-        if (edge1_dy > 0) edge1_trivAcc += edge1_dy;
+        int64_t edge_trivRejs[3];
+        int64_t edge_trivAccs[3];
 
-        int64_t edge2_trivRej = edge2;
-        int64_t edge2_trivAcc = edge2;
-        if (edge2_dx < 0) edge2_trivRej += edge2_dx;
-        if (edge2_dx > 0) edge2_trivAcc += edge2_dx;
-        if (edge2_dy < 0) edge2_trivRej += edge2_dy;
-        if (edge2_dy > 0) edge2_trivAcc += edge2_dy;
+        for (int v = 0; v < 3; v++)
+        {
+            edge_trivRejs[v] = edges[v];
+            edge_trivAccs[v] = edges[v];
+            if (edge_dxs[v] < 0) edge_trivRejs[v] += edge_dxs[v];
+            if (edge_dxs[v] > 0) edge_trivAccs[v] += edge_dxs[v];
+            if (edge_dys[v] < 0) edge_trivRejs[v] += edge_dys[v];
+            if (edge_dys[v] < 0) edge_trivAccs[v] += edge_dys[v];
+        }
 
         uint32_t tile_row_start = first_tile_y * fb->width_in_tiles;
         for (uint32_t tile_y = first_tile_y; tile_y <= last_tile_y; tile_y++)
         {
             uint32_t tile_i = tile_row_start;
-            int64_t tile_i_edge0 = edge0;
-            int64_t tile_i_edge1 = edge1;
-            int64_t tile_i_edge2 = edge2;
-            int64_t tile_i_edge0_trivRej = edge0_trivRej;
-            int64_t tile_i_edge1_trivRej = edge1_trivRej;
-            int64_t tile_i_edge2_trivRej = edge2_trivRej;
-            int64_t tile_i_edge0_trivAcc = edge0_trivAcc;
-            int64_t tile_i_edge1_trivAcc = edge1_trivAcc;
-            int64_t tile_i_edge2_trivAcc = edge2_trivAcc;
+
+            int64_t tile_i_edges[3];
+            int64_t tile_i_edge_trivRejs[3];
+            int64_t tile_i_edge_trivAccs[3];
+            for (int v = 0; v < 3; v++)
+            {
+                tile_i_edges[v] = edges[v];
+                tile_i_edge_trivRejs[v] = edge_trivRejs[v];
+                tile_i_edge_trivAccs[v] = edge_trivAccs[v];
+            }
 
             for (uint32_t tile_x = first_tile_x; tile_x <= last_tile_x; tile_x++)
             {
-                if (tile_i_edge0_trivRej >= 0 || tile_i_edge1_trivRej >= 0 || tile_i_edge2_trivRej >= 0)
+                if (tile_i_edge_trivRejs[0] >= 0 || tile_i_edge_trivRejs[1] >= 0 || tile_i_edge_trivRejs[2] >= 0)
                 {
                     // tile trivially rejected because at least one edge doesn't cover the tile at all
                     continue;
@@ -530,177 +513,59 @@ static void rasterize_triangle_fixed16_8_scalar(
                 tilecmd_drawtile_t drawtilecmd;
 
                 int32_t edge_needs_test[3];
-                edge_needs_test[0] = tile_i_edge0_trivAcc >= 0;
-                edge_needs_test[1] = tile_i_edge1_trivAcc >= 0;
-                edge_needs_test[2] = tile_i_edge2_trivAcc >= 0;
+                edge_needs_test[0] = tile_i_edge_trivRejs[0] >= 0;
+                edge_needs_test[1] = tile_i_edge_trivRejs[1] >= 0;
+                edge_needs_test[2] = tile_i_edge_trivRejs[2] >= 0;
                 int32_t num_tests_necessary = edge_needs_test[0] + edge_needs_test[1] + edge_needs_test[2];
                 
                 drawtilecmd.tilecmd_id = tilecmd_id_drawtile_0edge + num_tests_necessary;
 
                 // the N edges to test are the first N in the tilecmd.
                 // To do this, the triangle's vertices and edges are rotated.
-                // could do it with math, but was lazy/tired and just want it to be correct.
 
-                if (num_tests_necessary == 0 || num_tests_necessary == 3)
-                {
-                    drawtilecmd.x0 = x0;
-                    drawtilecmd.x1 = x1;
-                    drawtilecmd.x2 = x2;
-                    drawtilecmd.y0 = y0;
-                    drawtilecmd.y1 = y1;
-                    drawtilecmd.y2 = y2;
-                    drawtilecmd.z0 = z0;
-                    drawtilecmd.z1 = z1;
-                    drawtilecmd.z2 = z2;
-                    drawtilecmd.w0 = w0;
-                    drawtilecmd.w1 = w1;
-                    drawtilecmd.w2 = w2;
-                    drawtilecmd.tile_topleft_edge0 = tile_i_edge0;
-                    drawtilecmd.tile_topleft_edge1 = tile_i_edge1;
-                    drawtilecmd.tile_topleft_edge2 = tile_i_edge2;
-                    framebuffer_push_tilecmd(fb, tile_i, &drawtilecmd.tilecmd_id, sizeof(tilecmd_drawtile_t) / sizeof(uint32_t));
+                int vertex_rotation = 0;
+
+                if (num_tests_necessary == 1) {
+                    if (edge_needs_test[1]) vertex_rotation = 1;
+                    else if (edge_needs_test[2]) vertex_rotation = 2;
                 }
-                else if (num_tests_necessary == 1)
-                {
-                    if (edge_needs_test[0])
-                    {
-                        drawtilecmd.x0 = x0;
-                        drawtilecmd.x1 = x1;
-                        drawtilecmd.x2 = x2;
-                        drawtilecmd.y0 = y0;
-                        drawtilecmd.y1 = y1;
-                        drawtilecmd.y2 = y2;
-                        drawtilecmd.z0 = z0;
-                        drawtilecmd.z1 = z1;
-                        drawtilecmd.z2 = z2;
-                        drawtilecmd.w0 = w0;
-                        drawtilecmd.w1 = w1;
-                        drawtilecmd.w2 = w2;
-                        drawtilecmd.tile_topleft_edge0 = tile_i_edge0;
-                        drawtilecmd.tile_topleft_edge1 = tile_i_edge1;
-                        drawtilecmd.tile_topleft_edge2 = tile_i_edge2;
-                    }
-                    else if (edge_needs_test[1])
-                    {
-                        drawtilecmd.x0 = x1;
-                        drawtilecmd.x1 = x2;
-                        drawtilecmd.x2 = x0;
-                        drawtilecmd.y0 = y1;
-                        drawtilecmd.y1 = y2;
-                        drawtilecmd.y2 = y0;
-                        drawtilecmd.z0 = z1;
-                        drawtilecmd.z1 = z2;
-                        drawtilecmd.z2 = z0;
-                        drawtilecmd.w0 = w1;
-                        drawtilecmd.w1 = w2;
-                        drawtilecmd.w2 = w0;
-                        drawtilecmd.tile_topleft_edge0 = tile_i_edge1;
-                        drawtilecmd.tile_topleft_edge1 = tile_i_edge2;
-                        drawtilecmd.tile_topleft_edge2 = tile_i_edge0;
-                    }
-                    else if (edge_needs_test[2])
-                    {
-                        drawtilecmd.x0 = x2;
-                        drawtilecmd.x1 = x0;
-                        drawtilecmd.x2 = x1;
-                        drawtilecmd.y0 = y2;
-                        drawtilecmd.y1 = y0;
-                        drawtilecmd.y2 = y1;
-                        drawtilecmd.z0 = z2;
-                        drawtilecmd.z1 = z0;
-                        drawtilecmd.z2 = z1;
-                        drawtilecmd.w0 = w2;
-                        drawtilecmd.w1 = w0;
-                        drawtilecmd.w2 = w1;
-                        drawtilecmd.tile_topleft_edge0 = tile_i_edge2;
-                        drawtilecmd.tile_topleft_edge1 = tile_i_edge0;
-                        drawtilecmd.tile_topleft_edge2 = tile_i_edge1;
-                    }
-
-                    framebuffer_push_tilecmd(fb, tile_i, &drawtilecmd.tilecmd_id, sizeof(tilecmd_drawtile_t) / sizeof(uint32_t));
+                else if (num_tests_necessary == 2) {
+                    if (!edge_needs_test[0]) vertex_rotation = 1;
+                    else if (!edge_needs_test[1]) vertex_rotation = 2;
                 }
-                else if (num_tests_necessary == 2)
-                {
-                    if (!edge_needs_test[0])
-                    {
-                        drawtilecmd.x0 = x1;
-                        drawtilecmd.x1 = x2;
-                        drawtilecmd.x2 = x0;
-                        drawtilecmd.y0 = y1;
-                        drawtilecmd.y1 = y2;
-                        drawtilecmd.y2 = y0;
-                        drawtilecmd.z0 = z1;
-                        drawtilecmd.z1 = z2;
-                        drawtilecmd.z2 = z0;
-                        drawtilecmd.w0 = w1;
-                        drawtilecmd.w1 = w2;
-                        drawtilecmd.w2 = w0;
-                        drawtilecmd.tile_topleft_edge0 = tile_i_edge1;
-                        drawtilecmd.tile_topleft_edge1 = tile_i_edge2;
-                        drawtilecmd.tile_topleft_edge2 = tile_i_edge0;
-                    }
-                    else if (!edge_needs_test[1])
-                    {
-                        drawtilecmd.x0 = x2;
-                        drawtilecmd.x1 = x0;
-                        drawtilecmd.x2 = x1;
-                        drawtilecmd.y0 = y2;
-                        drawtilecmd.y1 = y0;
-                        drawtilecmd.y2 = y1;
-                        drawtilecmd.z0 = z2;
-                        drawtilecmd.z1 = z0;
-                        drawtilecmd.z2 = z1;
-                        drawtilecmd.w0 = w2;
-                        drawtilecmd.w1 = w0;
-                        drawtilecmd.w2 = w1;
-                        drawtilecmd.tile_topleft_edge0 = tile_i_edge2;
-                        drawtilecmd.tile_topleft_edge1 = tile_i_edge0;
-                        drawtilecmd.tile_topleft_edge2 = tile_i_edge1;
-                    }
-                    else if (!edge_needs_test[2])
-                    {
-                        drawtilecmd.x0 = x0;
-                        drawtilecmd.x1 = x1;
-                        drawtilecmd.x2 = x2;
-                        drawtilecmd.y0 = y0;
-                        drawtilecmd.y1 = y1;
-                        drawtilecmd.y2 = y2;
-                        drawtilecmd.z0 = z0;
-                        drawtilecmd.z1 = z1;
-                        drawtilecmd.z2 = z2;
-                        drawtilecmd.w0 = w0;
-                        drawtilecmd.w1 = w1;
-                        drawtilecmd.w2 = w2;
-                        drawtilecmd.tile_topleft_edge0 = tile_i_edge0;
-                        drawtilecmd.tile_topleft_edge1 = tile_i_edge1;
-                        drawtilecmd.tile_topleft_edge2 = tile_i_edge2;
-                    }
 
-                    framebuffer_push_tilecmd(fb, tile_i, &drawtilecmd.tilecmd_id, sizeof(tilecmd_drawtile_t) / sizeof(uint32_t));
+                for (int v = 0; v < 3; v++)
+                {
+                    drawtilecmd.verts[v] = verts[(v + vertex_rotation) % 3];
+                    drawtilecmd.edges[v] = edges[(v + vertex_rotation) % 3];
+
+                    // there's something unsound about the way 64 bit edge equations are being passed down as 32 bit
+                    // it makes sense that there shouldn't be loss of precision for nearby edges (the edges you need to test against)
+                    // however the edge equations that aren't tested (because they are trivially accepted) won't fit in 32 bits
+                    // how is that supposed to be dealt with?
+                    // in the meantime, just check that at least the checked edges are within range.
+                    if (v < num_tests_necessary)
+                    {
+                        assert(!(drawtilecmd.edges[v] & 0xFFFFFFFF00000000));
+                    }
                 }
 
                 tile_i++;
-                tile_i_edge0 += edge0_dx;
-                tile_i_edge1 += edge1_dx;
-                tile_i_edge2 += edge2_dx;
-                tile_i_edge0_trivRej += edge0_dx;
-                tile_i_edge1_trivRej += edge1_dx;
-                tile_i_edge2_trivRej += edge2_dx;
-                tile_i_edge0_trivAcc += edge0_dx;
-                tile_i_edge1_trivAcc += edge1_dx;
-                tile_i_edge2_trivAcc += edge2_dx;
+                for (int v = 0; v < 3; v++)
+                {
+                    tile_i_edges[v] += edge_dxs[v];
+                    tile_i_edge_trivRejs[v] += edge_dxs[v];
+                    tile_i_edge_trivAccs[v] += edge_dxs[v];
+                }
             }
 
             tile_row_start += fb->width_in_tiles;
-            edge0 += edge0_dy;
-            edge1 += edge1_dy;
-            edge2 += edge2_dy;
-            edge0_trivRej += edge0_dy;
-            edge1_trivRej += edge1_dy;
-            edge2_trivRej += edge2_dy;
-            edge0_trivAcc += edge0_dy;
-            edge1_trivAcc += edge1_dy;
-            edge2_trivAcc += edge2_dy;
+            for (int v = 0; v < 3; v++)
+            {
+                edges[v] += edge_dys[v];
+                edge_trivRejs[v] += edge_dys[v];
+                edge_trivAccs[v] += edge_dys[v];
+            }
         }
     }
 }
@@ -716,28 +581,24 @@ void draw(
 
     for (uint32_t vertex_id = 0, cmpt_id = 0; vertex_id < num_vertices; vertex_id += 3, cmpt_id += 12)
     {
-        int32_t x0, y0, z0, w0;
-        int32_t x1, y1, z1, w1;
-        int32_t x2, y2, z2, w2;
+        xyzw_i32_t verts[3];
+        xyzw_i32_t verts[3];
+        xyzw_i32_t verts[3];
 
-        x0 = vertices[cmpt_id + 0];
-        y0 = vertices[cmpt_id + 1];
-        z0 = vertices[cmpt_id + 2];
-        w0 = vertices[cmpt_id + 3];
-        x1 = vertices[cmpt_id + 4];
-        y1 = vertices[cmpt_id + 5];
-        z1 = vertices[cmpt_id + 6];
-        w1 = vertices[cmpt_id + 7];
-        x2 = vertices[cmpt_id + 8];
-        y2 = vertices[cmpt_id + 9];
-        z2 = vertices[cmpt_id + 10];
-        w2 = vertices[cmpt_id + 11];
+        verts[0].x = vertices[cmpt_id + 0];
+        verts[0].y = vertices[cmpt_id + 1];
+        verts[0].z = vertices[cmpt_id + 2];
+        verts[0].w = vertices[cmpt_id + 3];
+        verts[1].x = vertices[cmpt_id + 4];
+        verts[1].y = vertices[cmpt_id + 5];
+        verts[1].z = vertices[cmpt_id + 6];
+        verts[1].w = vertices[cmpt_id + 7];
+        verts[2].x = vertices[cmpt_id + 8];
+        verts[2].y = vertices[cmpt_id + 9];
+        verts[2].z = vertices[cmpt_id + 10];
+        verts[2].w = vertices[cmpt_id + 11];
 
-        rasterize_triangle_fixed16_8_scalar(
-            fb,
-            x0, y0, z0, w0,
-            x1, y1, z1, w1,
-            x2, y2, z2, w2);
+        rasterize_triangle_fixed16_8_scalar(fb, verts);
     }
 }
 
@@ -754,32 +615,26 @@ void draw_indexed(
 
     for (uint32_t index_id = 0; index_id < num_indices; index_id += 3)
     {
-        int32_t x0, y0, z0, w0;
-        int32_t x1, y1, z1, w1;
-        int32_t x2, y2, z2, w2;
+        xyzw_i32_t verts[3];
 
         uint32_t cmpt_i0 = indices[index_id + 0] * 4;
         uint32_t cmpt_i1 = indices[index_id + 1] * 4;
         uint32_t cmpt_i2 = indices[index_id + 2] * 4;
 
-        x0 = vertices[cmpt_i0 + 0];
-        y0 = vertices[cmpt_i0 + 1];
-        z0 = vertices[cmpt_i0 + 2];
-        w0 = vertices[cmpt_i0 + 3];
-        x1 = vertices[cmpt_i1 + 0];
-        y1 = vertices[cmpt_i1 + 1];
-        z1 = vertices[cmpt_i1 + 2];
-        w1 = vertices[cmpt_i1 + 3];
-        x2 = vertices[cmpt_i2 + 0];
-        y2 = vertices[cmpt_i2 + 1];
-        z2 = vertices[cmpt_i2 + 2];
-        w2 = vertices[cmpt_i2 + 3];
+        verts[0].x = vertices[cmpt_i0 + 0];
+        verts[0].y = vertices[cmpt_i0 + 1];
+        verts[0].z = vertices[cmpt_i0 + 2];
+        verts[0].w = vertices[cmpt_i0 + 3];
+        verts[1].x = vertices[cmpt_i1 + 0];
+        verts[1].y = vertices[cmpt_i1 + 1];
+        verts[1].z = vertices[cmpt_i1 + 2];
+        verts[1].w = vertices[cmpt_i1 + 3];
+        verts[2].x = vertices[cmpt_i2 + 0];
+        verts[2].y = vertices[cmpt_i2 + 1];
+        verts[2].z = vertices[cmpt_i2 + 2];
+        verts[2].w = vertices[cmpt_i2 + 3];
 
-        rasterize_triangle_fixed16_8_scalar(
-            fb,
-            x0, y0, z0, w0,
-            x1, y1, z1, w1,
-            x2, y2, z2, w2);
+        rasterize_triangle_fixed16_8_scalar(fb, verts);
     }
 }
 
