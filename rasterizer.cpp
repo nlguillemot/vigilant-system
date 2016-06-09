@@ -119,6 +119,8 @@ typedef struct tilecmd_drawtile_t
     uint32_t tilecmd_id;
     xyzw_i32_t verts[3];
     int32_t edges[3];
+    int32_t edge_dxs[3];
+    int32_t edge_dys[3];
 } tilecmd_drawtile_0edge_t;
 
 typedef struct framebuffer_t
@@ -145,7 +147,7 @@ typedef struct framebuffer_t
 framebuffer_t* new_framebuffer(uint32_t width, uint32_t height)
 {
 #ifdef RASTERIZER_UNIT_TESTS
-    static int ran_rasterizer_unit_tests_once = 0;
+    static int32_t ran_rasterizer_unit_tests_once = 0;
     if (!ran_rasterizer_unit_tests_once)
     {
         // set this before running the tests, so that unit tests can create framebuffers without causing infinite recursion
@@ -233,11 +235,61 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, uint32_t tile_id)
             cmd += sizeof(tilecmd_drawsmalltri_t) / sizeof(uint32_t);
         }
         else if (tilecmd_id == tilecmd_id_drawtile_0edge)
-        {
+        {           
+            for (uint32_t i = 0; i < FRAMEBUFFER_PIXELS_PER_TILE; i++)
+            {
+                fb->backbuffer[tile_id * FRAMEBUFFER_PIXELS_PER_TILE + i] = g_Color;
+            }
+
             cmd += sizeof(tilecmd_drawtile_t) / sizeof(uint32_t);
         }
         else if (tilecmd_id == tilecmd_id_drawtile_1edge)
         {
+            tilecmd_drawtile_t* drawcmd = (tilecmd_drawtile_t*)cmd;
+
+            int32_t edge_stamps[1][4];
+            for (int32_t i = 0; i < 1; i++)
+            {
+                edge_stamps[i][0] = drawcmd->edges[i];
+                edge_stamps[i][1] = drawcmd->edges[i] + drawcmd->edge_dxs[i];
+                edge_stamps[i][2] = drawcmd->edges[i] + drawcmd->edge_dys[i];
+                edge_stamps[i][3] = drawcmd->edges[i] + drawcmd->edge_dxs[i] + drawcmd->edge_dys[i];
+            }
+
+            uint32_t i = 0;
+            while (i < FRAMEBUFFER_PIXELS_PER_TILE)
+            {
+                int32_t row_edges[1][4];
+                for (uint32_t i = 0; i < 1; i++)
+                {
+                    row_edges[i][0] = edge_stamps[i][0];
+                    row_edges[i][1] = edge_stamps[i][1];
+                    row_edges[i][2] = edge_stamps[i][2];
+                    row_edges[i][3] = edge_stamps[i][3];
+                }
+
+                for (uint32_t x = 0; x < FRAMEBUFFER_TILE_WIDTH_IN_PIXELS; x += 2)
+                {
+                    fb->backbuffer[tile_id * FRAMEBUFFER_PIXELS_PER_TILE + i] = g_Color;
+
+                    for (uint32_t i = 0; i < 1; i++)
+                    {
+                        row_edges[i][0] += drawcmd->edge_dxs[i] * 2;
+                        row_edges[i][1] += drawcmd->edge_dxs[i] * 2;
+                        row_edges[i][2] += drawcmd->edge_dxs[i] * 2;
+                        row_edges[i][3] += drawcmd->edge_dxs[i] * 2;
+                    }
+                }
+
+                for (uint32_t i = 0; i < 1; i++)
+                {
+                    edge_stamps[i][0] += drawcmd->edge_dys[i] * 2;
+                    edge_stamps[i][1] += drawcmd->edge_dys[i] * 2;
+                    edge_stamps[i][2] += drawcmd->edge_dys[i] * 2;
+                    edge_stamps[i][3] += drawcmd->edge_dys[i] * 2;
+                }
+            }
+
             cmd += sizeof(tilecmd_drawtile_t) / sizeof(uint32_t);
         }
         else if (tilecmd_id == tilecmd_id_drawtile_2edge)
@@ -516,7 +568,7 @@ static void rasterize_triangle_fixed16_8_scalar(
         int64_t edge_trivRejs[3];
         int64_t edge_trivAccs[3];
 
-        for (int v = 0; v < 3; v++)
+        for (int32_t v = 0; v < 3; v++)
         {
             edge_trivRejs[v] = edges[v];
             edge_trivAccs[v] = edges[v];
@@ -534,7 +586,7 @@ static void rasterize_triangle_fixed16_8_scalar(
             int64_t tile_i_edges[3];
             int64_t tile_i_edge_trivRejs[3];
             int64_t tile_i_edge_trivAccs[3];
-            for (int v = 0; v < 3; v++)
+            for (int32_t v = 0; v < 3; v++)
             {
                 tile_i_edges[v] = edges[v];
                 tile_i_edge_trivRejs[v] = edge_trivRejs[v];
@@ -562,7 +614,7 @@ static void rasterize_triangle_fixed16_8_scalar(
                 // the N edges to test are the first N in the tilecmd.
                 // To do this, the triangle's vertices and edges are rotated.
 
-                int vertex_rotation = 0;
+                int32_t vertex_rotation = 0;
 
                 if (num_tests_necessary == 1) {
                     if (edge_needs_test[1]) vertex_rotation = 1;
@@ -573,9 +625,11 @@ static void rasterize_triangle_fixed16_8_scalar(
                     else if (!edge_needs_test[1]) vertex_rotation = 2;
                 }
 
-                for (int v = 0; v < 3; v++)
+                for (int32_t v = 0; v < 3; v++)
                 {
-                    drawtilecmd.verts[v] = verts[(v + vertex_rotation) % 3];
+                    int32_t rotated_v = (v + vertex_rotation) % 3;
+
+                    drawtilecmd.verts[v] = verts[rotated_v];
 
                     // there's something unsound about the way 64 bit edge equations are being passed down as 32 bit
                     // it makes sense that there shouldn't be loss of precision for nearby edges (the edges you need to test against)
@@ -585,15 +639,19 @@ static void rasterize_triangle_fixed16_8_scalar(
                     if (v < num_tests_necessary)
                     {
                         assert(!(drawtilecmd.edges[v] & 0xFFFFFFFF00000000));
+                        assert(!(drawtilecmd.edge_dxs[v] & 0xFFFFFFFF00000000));
+                        assert(!(drawtilecmd.edge_dys[v] & 0xFFFFFFFF00000000));
                     }
 
-                    drawtilecmd.edges[v] = (int32_t)edges[(v + vertex_rotation) % 3];
+                    drawtilecmd.edges[v] = (int32_t)edges[rotated_v];
+                    drawtilecmd.edge_dxs[v] = (int32_t)edge_dxs[rotated_v];
+                    drawtilecmd.edge_dys[v] = (int32_t)edge_dys[rotated_v];
                 }
 
                 framebuffer_push_tilecmd(fb, tile_i, &drawtilecmd.tilecmd_id, sizeof(drawtilecmd) / sizeof(uint32_t));
 
                 tile_i++;
-                for (int v = 0; v < 3; v++)
+                for (int32_t v = 0; v < 3; v++)
                 {
                     tile_i_edges[v] += edge_dxs[v];
                     tile_i_edge_trivRejs[v] += edge_dxs[v];
@@ -602,7 +660,7 @@ static void rasterize_triangle_fixed16_8_scalar(
             }
 
             tile_row_start += fb->width_in_tiles;
-            for (int v = 0; v < 3; v++)
+            for (int32_t v = 0; v < 3; v++)
             {
                 edges[v] += edge_dys[v];
                 edge_trivRejs[v] += edge_dys[v];
