@@ -265,6 +265,45 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, uint32_t tile_id)
 static void framebuffer_push_tilecmd(framebuffer_t* fb, uint32_t tile_id, const uint32_t* cmd_dwords, uint32_t num_dwords)
 {
     tile_cmdbuf_t* cmdbuf = &fb->tile_cmdbufs[tile_id];
+    
+    if (cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write > 0 && cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write < num_dwords)
+    {
+        // read ptr is after write ptr and there's not enough room in between
+        // therefore, need to flush
+        framebuffer_resolve_tile(fb, tile_id);
+    }
+
+    if (cmdbuf->cmdbuf_end - cmdbuf->cmdbuf_write < num_dwords)
+    {
+        // not enough room in the buffer to write the commands, need to loop around
+
+        // should never be at the end of the buffer since it always loops at the end of this function
+        assert(cmdbuf->cmdbuf_write != cmdbuf->cmdbuf_end);
+
+        // abandon the rest of the slop at the end of the buffer
+        *cmdbuf->cmdbuf_write = tilecmd_id_resetbuf;
+        cmdbuf->cmdbuf_write = cmdbuf->cmdbuf_start;
+
+        if (cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write > 0 && cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write < num_dwords)
+        {
+            // read ptr is after write ptr and the write ptr can't pass the read ptr
+            // therefore, need to flush
+            framebuffer_resolve_tile(fb, tile_id);
+        }
+    }
+
+    // finally actually write the command
+    for (uint32_t i = 0; i < num_dwords; i++)
+    {
+        cmdbuf->cmdbuf_write[i] = cmd_dwords[i];
+    }
+    cmdbuf->cmdbuf_write += num_dwords;
+
+    // loop around the buffer if necessary
+    if (cmdbuf->cmdbuf_write == cmdbuf->cmdbuf_end)
+    {
+        cmdbuf->cmdbuf_write = cmdbuf->cmdbuf_start;
+    }
 }
 
 void framebuffer_resolve(framebuffer_t* fb)
@@ -537,7 +576,6 @@ static void rasterize_triangle_fixed16_8_scalar(
                 for (int v = 0; v < 3; v++)
                 {
                     drawtilecmd.verts[v] = verts[(v + vertex_rotation) % 3];
-                    drawtilecmd.edges[v] = edges[(v + vertex_rotation) % 3];
 
                     // there's something unsound about the way 64 bit edge equations are being passed down as 32 bit
                     // it makes sense that there shouldn't be loss of precision for nearby edges (the edges you need to test against)
@@ -548,7 +586,11 @@ static void rasterize_triangle_fixed16_8_scalar(
                     {
                         assert(!(drawtilecmd.edges[v] & 0xFFFFFFFF00000000));
                     }
+
+                    drawtilecmd.edges[v] = (int32_t)edges[(v + vertex_rotation) % 3];
                 }
+
+                framebuffer_push_tilecmd(fb, tile_i, &drawtilecmd.tilecmd_id, sizeof(drawtilecmd) / sizeof(uint32_t));
 
                 tile_i++;
                 for (int v = 0; v < 3; v++)
@@ -568,7 +610,7 @@ static void rasterize_triangle_fixed16_8_scalar(
             }
         }
     }
-}
+} 
 
 void draw(
     framebuffer_t* fb,
