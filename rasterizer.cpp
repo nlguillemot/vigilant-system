@@ -218,6 +218,61 @@ void delete_framebuffer(framebuffer_t* fb)
 // hack
 uint32_t g_Color;
 
+static void draw_tile_small(framebuffer_t* fb, uint32_t tile_id, const tilecmd_drawsmalltri_t* drawcmd)
+{
+}
+
+static void draw_tile_large(framebuffer_t* fb, uint32_t tile_id, const tilecmd_drawtile_t* drawcmd)
+{
+    uint32_t num_test_edges = drawcmd->tilecmd_id - tilecmd_id_drawtile_0edge;
+
+    int32_t edge_stamps[3][4];
+    for (uint32_t i = 0; i < num_test_edges; i++)
+    {
+        edge_stamps[i][0] = drawcmd->edges[i];
+        edge_stamps[i][1] = drawcmd->edges[i] + drawcmd->edge_dxs[i];
+        edge_stamps[i][2] = drawcmd->edges[i] + drawcmd->edge_dys[i];
+        edge_stamps[i][3] = drawcmd->edges[i] + drawcmd->edge_dxs[i] + drawcmd->edge_dys[i];
+    }
+
+    // TODO: This makes sense for fine rasterization,
+    // but need to handle coarse rasterization too.
+    // This is because 2x2 quads are row major inside one coarse block
+    uint32_t i = 0;
+    while (i < FRAMEBUFFER_PIXELS_PER_TILE)
+    {
+        int32_t row_edges[3][4];
+        for (uint32_t e = 0; e < num_test_edges; e++)
+        {
+            row_edges[e][0] = edge_stamps[e][0];
+            row_edges[e][1] = edge_stamps[e][1];
+            row_edges[e][2] = edge_stamps[e][2];
+            row_edges[e][3] = edge_stamps[e][3];
+        }
+
+        for (uint32_t x = 0; x < FRAMEBUFFER_TILE_WIDTH_IN_PIXELS; x += 2)
+        {
+            fb->backbuffer[tile_id * FRAMEBUFFER_PIXELS_PER_TILE + i] = g_Color;
+
+            for (uint32_t e = 0; e < num_test_edges; e++)
+            {
+                row_edges[e][0] += drawcmd->edge_dxs[e] * 2;
+                row_edges[e][1] += drawcmd->edge_dxs[e] * 2;
+                row_edges[e][2] += drawcmd->edge_dxs[e] * 2;
+                row_edges[e][3] += drawcmd->edge_dxs[e] * 2;
+            }
+        }
+
+        for (uint32_t e = 0; e < num_test_edges; e++)
+        {
+            edge_stamps[e][0] += drawcmd->edge_dys[e] * 2;
+            edge_stamps[e][1] += drawcmd->edge_dys[e] * 2;
+            edge_stamps[e][2] += drawcmd->edge_dys[e] * 2;
+            edge_stamps[e][3] += drawcmd->edge_dys[e] * 2;
+        }
+    }
+}
+
 static void framebuffer_resolve_tile(framebuffer_t* fb, uint32_t tile_id)
 {
     tile_cmdbuf_t* cmdbuf = &fb->tile_cmdbufs[tile_id];
@@ -232,75 +287,27 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, uint32_t tile_id)
         }
         else if (tilecmd_id == tilecmd_id_drawsmalltri)
         {
+            draw_tile_small(fb, tile_id, (tilecmd_drawsmalltri_t*)cmd);
             cmd += sizeof(tilecmd_drawsmalltri_t) / sizeof(uint32_t);
         }
         else if (tilecmd_id == tilecmd_id_drawtile_0edge)
         {           
-            for (uint32_t i = 0; i < FRAMEBUFFER_PIXELS_PER_TILE; i++)
-            {
-                fb->backbuffer[tile_id * FRAMEBUFFER_PIXELS_PER_TILE + i] = g_Color;
-            }
-
+            draw_tile_large(fb, tile_id, (tilecmd_drawtile_t*)cmd);
             cmd += sizeof(tilecmd_drawtile_t) / sizeof(uint32_t);
         }
         else if (tilecmd_id == tilecmd_id_drawtile_1edge)
         {
+            draw_tile_large(fb, tile_id, (tilecmd_drawtile_t*)cmd);
             cmd += sizeof(tilecmd_drawtile_t) / sizeof(uint32_t);
         }
         else if (tilecmd_id == tilecmd_id_drawtile_2edge)
         {
+            draw_tile_large(fb, tile_id, (tilecmd_drawtile_t*)cmd);
             cmd += sizeof(tilecmd_drawtile_t) / sizeof(uint32_t);
         }
         else if (tilecmd_id == tilecmd_id_drawtile_3edge)
         {
-            tilecmd_drawtile_t* drawcmd = (tilecmd_drawtile_t*)cmd;
-
-            int32_t edge_stamps[3][4];
-            for (int32_t i = 0; i < 3; i++)
-            {
-                edge_stamps[i][0] = drawcmd->edges[i];
-                edge_stamps[i][1] = drawcmd->edges[i] + drawcmd->edge_dxs[i];
-                edge_stamps[i][2] = drawcmd->edges[i] + drawcmd->edge_dys[i];
-                edge_stamps[i][3] = drawcmd->edges[i] + drawcmd->edge_dxs[i] + drawcmd->edge_dys[i];
-            }
-
-            // TODO: This makes sense for fine rasterization,
-            // but need to handle coarse rasterization too.
-            // This is because 2x2 quads are row major inside one coarse block
-            uint32_t i = 0;
-            while (i < FRAMEBUFFER_PIXELS_PER_TILE)
-            {
-                int32_t row_edges[3][4];
-                for (uint32_t e = 0; e < 3; e++)
-                {
-                    row_edges[e][0] = edge_stamps[e][0];
-                    row_edges[e][1] = edge_stamps[e][1];
-                    row_edges[e][2] = edge_stamps[e][2];
-                    row_edges[e][3] = edge_stamps[e][3];
-                }
-
-                for (uint32_t x = 0; x < FRAMEBUFFER_TILE_WIDTH_IN_PIXELS; x += 2)
-                {
-                    fb->backbuffer[tile_id * FRAMEBUFFER_PIXELS_PER_TILE + i] = g_Color;
-
-                    for (uint32_t e = 0; e < 3; e++)
-                    {
-                        row_edges[e][0] += drawcmd->edge_dxs[e] * 2;
-                        row_edges[e][1] += drawcmd->edge_dxs[e] * 2;
-                        row_edges[e][2] += drawcmd->edge_dxs[e] * 2;
-                        row_edges[e][3] += drawcmd->edge_dxs[e] * 2;
-                    }
-                }
-
-                for (uint32_t e = 0; e < 3; e++)
-                {
-                    edge_stamps[e][0] += drawcmd->edge_dys[e] * 2;
-                    edge_stamps[e][1] += drawcmd->edge_dys[e] * 2;
-                    edge_stamps[e][2] += drawcmd->edge_dys[e] * 2;
-                    edge_stamps[e][3] += drawcmd->edge_dys[e] * 2;
-                }
-            }
-
+            draw_tile_large(fb, tile_id, (tilecmd_drawtile_t*)cmd);
             cmd += sizeof(tilecmd_drawtile_t) / sizeof(uint32_t);
         }
         else
