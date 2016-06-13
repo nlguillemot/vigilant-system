@@ -33,15 +33,11 @@ void run_rasterizer_unit_tests();
 #define COARSE_BLOCK_WIDTH_IN_PIXELS 16
 #define FINE_BLOCK_WIDTH_IN_PIXELS 4
 
-// small sizes (for testing)
-// #define TILE_WIDTH_IN_PIXELS 4
-// #define COARSE_BLOCK_WIDTH_IN_PIXELS 2
-// #define FINE_BLOCK_WIDTH_IN_PIXELS 1
-
 // Convenience
 #define PIXELS_PER_TILE (TILE_WIDTH_IN_PIXELS * TILE_WIDTH_IN_PIXELS)
 #define PIXELS_PER_COARSE_BLOCK (COARSE_BLOCK_WIDTH_IN_PIXELS * COARSE_BLOCK_WIDTH_IN_PIXELS)
 #define PIXELS_PER_FINE_BLOCK (FINE_BLOCK_WIDTH_IN_PIXELS * FINE_BLOCK_WIDTH_IN_PIXELS)
+
 #define TILE_WIDTH_IN_COARSE_BLOCKS (TILE_WIDTH_IN_PIXELS / COARSE_BLOCK_WIDTH_IN_PIXELS)
 #define COARSE_BLOCK_WIDTH_IN_FINE_BLOCKS (COARSE_BLOCK_WIDTH_IN_PIXELS / FINE_BLOCK_WIDTH_IN_PIXELS)
 #define COARSE_BLOCKS_PER_TILE (PIXELS_PER_TILE / PIXELS_PER_COARSE_BLOCK)
@@ -70,18 +66,20 @@ __forceinline uint32_t pdep_u32(uint32_t source, uint32_t mask)
 {
     // horribly inefficient, but that's life without AVX2.
     // however, typically not a problem since you only need to swizzle once up front.
-    uint32_t dst = 0;
-    for (uint32_t mask_i = 0, dst_i = 0; mask_i < 32; mask_i++)
-    {
-        if (mask & (1 << mask_i))
-        {
-            uint32_t src_bit = (source & (1 << dst_i)) >> dst_i;
-            dst |= src_bit << mask_i;
-
-            dst_i++;
-        }
-    }
-    return dst;
+	// Implementation based on the pseudocode in http://www.felixcloutier.com/x86/PDEP.html
+	uint32_t temp = source;
+	uint32_t dest = 0;
+	uint32_t m = 0, k = 0;
+	while (m < 32)
+	{
+		if (mask & (1 << m))
+		{
+			dest = (dest & ~(1 << m)) | (((temp & (1 << k)) >> k) << m);
+			k = k + 1;
+		}
+		m = m+ 1;
+	}
+	return dest;
 }
 #endif
 
@@ -234,11 +232,11 @@ static void draw_coarse_block(framebuffer_t* fb, uint32_t tile_id, const tilecmd
     }
 }
 
-static void draw_tile_small(framebuffer_t* fb, uint32_t tile_id, const tilecmd_drawsmalltri_t* drawcmd)
+static void draw_tile_smalltri(framebuffer_t* fb, uint32_t tile_id, const tilecmd_drawsmalltri_t* drawcmd)
 {
 }
 
-static void draw_tile_large(framebuffer_t* fb, uint32_t tile_id, const tilecmd_drawtile_t* drawcmd)
+static void draw_tile_largetri(framebuffer_t* fb, uint32_t tile_id, const tilecmd_drawtile_t* drawcmd)
 {
     uint32_t num_test_edges = drawcmd->tilecmd_id - tilecmd_id_drawtile_0edge;
 
@@ -280,8 +278,39 @@ static void draw_tile_large(framebuffer_t* fb, uint32_t tile_id, const tilecmd_d
 
             if (!trivially_rejected)
             {
-                // TODO: trivial accepts
-                draw_coarse_block(fb, tile_id, drawcmd);
+				tilecmd_drawtile_t drawtilecmd;
+
+				int32_t edge_needs_test[3] = { };
+				for (uint32_t v = 0; v < num_test_edges; v++)
+				{
+					edge_needs_test[v] = edge_row_trivAccs[v] >= 0;
+				}
+				int32_t num_tests_necessary = edge_needs_test[0] + edge_needs_test[1] + edge_needs_test[2];
+
+				drawtilecmd.tilecmd_id = tilecmd_id_drawtile_0edge + num_tests_necessary;
+
+				int32_t vertex_rotation = 0;
+
+				if (num_tests_necessary == 1) {
+					if (edge_needs_test[1]) vertex_rotation = 1;
+					else if (edge_needs_test[2]) vertex_rotation = 2;
+				}
+				else if (num_tests_necessary == 2) {
+					if (!edge_needs_test[0]) vertex_rotation = 1;
+					else if (!edge_needs_test[1]) vertex_rotation = 2;
+				}
+
+				for (int32_t v = 0; v < 3; v++)
+				{
+					int32_t rotated_v = (v + vertex_rotation) % 3;
+
+					drawtilecmd.verts[v] = drawcmd->verts[rotated_v];
+					drawtilecmd.edges[v] = (int32_t)drawcmd->edges[rotated_v];
+					drawtilecmd.edge_dxs[v] = (int32_t)drawcmd->edge_dxs[rotated_v];
+					drawtilecmd.edge_dys[v] = (int32_t)drawcmd->edge_dys[rotated_v];
+				}
+
+                draw_coarse_block(fb, tile_id, &drawtilecmd);
             }
 
             for (uint32_t v = 0; v < num_test_edges; v++)
@@ -313,12 +342,12 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, uint32_t tile_id)
         }
         else if (tilecmd_id == tilecmd_id_drawsmalltri)
         {
-            draw_tile_small(fb, tile_id, (tilecmd_drawsmalltri_t*)cmd);
+            draw_tile_smalltri(fb, tile_id, (tilecmd_drawsmalltri_t*)cmd);
             cmd += sizeof(tilecmd_drawsmalltri_t) / sizeof(uint32_t);
         }
         else if (tilecmd_id >= tilecmd_id_drawtile_0edge && tilecmd_id <= tilecmd_id_drawtile_3edge)
         {           
-            draw_tile_large(fb, tile_id, (tilecmd_drawtile_t*)cmd);
+            draw_tile_largetri(fb, tile_id, (tilecmd_drawtile_t*)cmd);
             cmd += sizeof(tilecmd_drawtile_t) / sizeof(uint32_t);
         }
         else
@@ -633,9 +662,9 @@ static void rasterize_triangle_fixed16_8_scalar(
                     tilecmd_drawtile_t drawtilecmd;
 
                     int32_t edge_needs_test[3];
-                    edge_needs_test[0] = tile_i_edge_trivRejs[0] >= 0;
-                    edge_needs_test[1] = tile_i_edge_trivRejs[1] >= 0;
-                    edge_needs_test[2] = tile_i_edge_trivRejs[2] >= 0;
+                    edge_needs_test[0] = tile_i_edge_trivAccs[0] >= 0;
+                    edge_needs_test[1] = tile_i_edge_trivAccs[1] >= 0;
+                    edge_needs_test[2] = tile_i_edge_trivAccs[2] >= 0;
                     int32_t num_tests_necessary = edge_needs_test[0] + edge_needs_test[1] + edge_needs_test[2];
 
                     drawtilecmd.tilecmd_id = tilecmd_id_drawtile_0edge + num_tests_necessary;
