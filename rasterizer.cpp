@@ -633,10 +633,11 @@ static void rasterize_triangle_fixed16_8_scalar(
         // | bx by  0 |
         // = ax*by - ay*bx
         // eg: a = (v1-v0), b = (px-v0)
+		// eg: a = (px-v0), b = (v1-v0)
         int64_t edges[3];
-        edges[0] = ((int64_t)(verts[1].x - verts[0].x) * (first_tile_px_y - verts[0].y) - (int64_t)(verts[1].y - verts[0].y) * (first_tile_px_x - verts[0].x)) >> 8;
-        edges[1] = ((int64_t)(verts[2].x - verts[1].x) * (first_tile_px_y - verts[1].y) - (int64_t)(verts[2].y - verts[1].y) * (first_tile_px_x - verts[1].x)) >> 8;
-        edges[2] = ((int64_t)(verts[0].x - verts[2].x) * (first_tile_px_y - verts[2].y) - (int64_t)(verts[0].y - verts[2].y) * (first_tile_px_x - verts[2].x)) >> 8;
+		edges[0] = ((int64_t)(first_tile_px_x - verts[0].x) * (verts[1].y - verts[0].y) - (int64_t)(first_tile_px_y - verts[0].y) * (verts[1].x - verts[0].x)) >> 8;
+		edges[1] = ((int64_t)(first_tile_px_x - verts[1].x) * (verts[2].y - verts[1].y) - (int64_t)(first_tile_px_y - verts[1].y) * (verts[2].x - verts[1].x)) >> 8;
+		edges[2] = ((int64_t)(first_tile_px_x - verts[2].x) * (verts[0].y - verts[2].y) - (int64_t)(first_tile_px_y - verts[2].y) * (verts[0].x - verts[2].x)) >> 8;
 
         // Top-left rule: shift non top-left edges ever so slightly inward
         if ((verts[0].y != verts[1].y || verts[0].x >= verts[1].x) && verts[1].y >= verts[0].y) edges[0]++;
@@ -833,6 +834,7 @@ void draw_indexed(
 }
 
 #ifdef RASTERIZER_UNIT_TESTS
+#include "stb_image_write.h"
 void run_rasterizer_unit_tests()
 {
     // pdep tests
@@ -938,5 +940,45 @@ void run_rasterizer_unit_tests()
         free(rowmajor_data);
         delete_framebuffer(fb);
     }
+
+	// large triangle test
+	{
+		uint32_t fbwidth = TILE_WIDTH_IN_PIXELS * 3;
+		uint32_t fbheight = TILE_WIDTH_IN_PIXELS * 3;
+		framebuffer_t* fb = new_framebuffer(fbwidth, fbheight);
+
+		int32_t verts[] = {
+			0 << 8, 0 << 8, 0, 1 << 8,
+			(TILE_WIDTH_IN_PIXELS * 2) << 8, 0 << 8, 0, 1 << 8,
+			0 << 8, (TILE_WIDTH_IN_PIXELS  * 2) << 8, 0, 1 << 8
+		};
+
+		g_Color = 0xFFFF00FF;
+		draw(fb, verts, 3);
+
+		// make sure all caches are flushed and yada yada
+		framebuffer_resolve(fb);
+
+		// convert framebuffer from bgra to rgba for stbi_image_write
+		{
+			uint8_t* rgba8_pixels = (uint8_t*)malloc(fbwidth * fbheight * 4);
+			assert(rgba8_pixels);
+
+			// readback framebuffer contents
+			framebuffer_pack_row_major(fb, 0, 0, fbwidth, fbheight, pixelformat_r8g8b8a8_unorm, rgba8_pixels);
+
+			if (!stbi_write_png("output.png", fbwidth, fbheight, 4, rgba8_pixels, fbwidth * 4))
+			{
+				fprintf(stderr, "Failed to write image\n");
+				exit(1);
+			}
+
+			free(rgba8_pixels);
+		}
+
+		system("output.png");
+
+		delete_framebuffer(fb);
+	}
 }
 #endif
