@@ -632,27 +632,26 @@ static void rasterize_triangle_fixed16_8_scalar(
         // | ax ay  0 |
         // | bx by  0 |
         // = ax*by - ay*bx
-        // eg: a = (v1-v0), b = (px-v0)
 		// eg: a = (px-v0), b = (v1-v0)
         int64_t edges[3];
-		edges[0] = ((int64_t)(first_tile_px_x - verts[0].x) * (verts[1].y - verts[0].y) - (int64_t)(first_tile_px_y - verts[0].y) * (verts[1].x - verts[0].x)) >> 8;
-		edges[1] = ((int64_t)(first_tile_px_x - verts[1].x) * (verts[2].y - verts[1].y) - (int64_t)(first_tile_px_y - verts[1].y) * (verts[2].x - verts[1].x)) >> 8;
-		edges[2] = ((int64_t)(first_tile_px_x - verts[2].x) * (verts[0].y - verts[2].y) - (int64_t)(first_tile_px_y - verts[2].y) * (verts[0].x - verts[2].x)) >> 8;
+		edges[0] = (((int64_t)first_tile_px_x - verts[0].x) * (verts[1].y - verts[0].y) - ((int64_t)first_tile_px_y - verts[0].y) * (verts[1].x - verts[0].x)) >> 8;
+		edges[1] = (((int64_t)first_tile_px_x - verts[1].x) * (verts[2].y - verts[1].y) - ((int64_t)first_tile_px_y - verts[1].y) * (verts[2].x - verts[1].x)) >> 8;
+		edges[2] = (((int64_t)first_tile_px_x - verts[2].x) * (verts[0].y - verts[2].y) - ((int64_t)first_tile_px_y - verts[2].y) * (verts[0].x - verts[2].x)) >> 8;
 
-        // Top-left rule: shift non top-left edges ever so slightly inward
-        if ((verts[0].y != verts[1].y || verts[0].x >= verts[1].x) && verts[1].y >= verts[0].y) edges[0]++;
-        if ((verts[1].y != verts[2].y || verts[1].x >= verts[2].x) && verts[2].y >= verts[1].y) edges[1]++;
-        if ((verts[2].y != verts[0].y || verts[2].x >= verts[0].x) && verts[0].y >= verts[2].y) edges[2]++;
+        // Top-left rule: shift top-left edges ever so slightly outward to make the top-left edges be the tie-breakers when rasterizing adjacent triangles
+		if ((verts[0].y == verts[1].y && verts[0].x < verts[1].x) || verts[0].y > verts[1].y) edges[0]--;
+		if ((verts[1].y == verts[2].y && verts[1].x < verts[2].x) || verts[1].y > verts[2].y) edges[1]--;
+		if ((verts[2].y == verts[0].y && verts[2].x < verts[0].x) || verts[2].y > verts[0].y) edges[2]--;
 
         // offset the edge equations so they can be used to do a trivial reject test
         // this means finding the corner of the first tile that is the most negative (the "most inside") the triangle
         int32_t edge_dxs[3], edge_dys[3];
-        edge_dxs[0] = verts[0].y - verts[1].y;
-        edge_dys[0] = verts[1].x - verts[0].x;
-        edge_dxs[1] = verts[1].y - verts[2].y;
-        edge_dys[1] = verts[2].x - verts[1].x;
+        edge_dxs[0] = verts[1].y - verts[0].y;
+        edge_dys[0] = verts[0].x - verts[1].x;
+        edge_dxs[1] = verts[2].y - verts[1].y;
+        edge_dys[1] = verts[1].x - verts[2].x;
         edge_dxs[2] = verts[0].y - verts[2].y;
-        edge_dys[2] = verts[0].x - verts[2].x;
+        edge_dys[2] = verts[2].x - verts[0].x;
 
         int64_t tile_edge_dxs[3];
         int64_t tile_edge_dys[3];
@@ -734,6 +733,7 @@ static void rasterize_triangle_fixed16_8_scalar(
                         // in the meantime, just check that at least the checked edges are within range.
                         if (v < num_tests_necessary)
                         {
+							// TODO: Fix these for signed numbers
                             assert(!(drawtilecmd.edges[v] & 0xFFFFFFFF00000000));
                             assert(!(drawtilecmd.edge_dxs[v] & 0xFFFFFFFF00000000));
                             assert(!(drawtilecmd.edge_dys[v] & 0xFFFFFFFF00000000));
