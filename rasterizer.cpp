@@ -112,6 +112,11 @@ typedef struct tilecmd_drawsmalltri_t
 {
     uint32_t tilecmd_id;
     xyzw_i32_t verts[3];
+	int32_t edges[3];
+	int32_t edge_dxs[3];
+	int32_t edge_dys[3];
+	int32_t first_coarse_x, last_coarse_x;
+	int32_t first_coarse_y, last_coarse_y;
 } tilecmd_drawsmalltri_t;
 
 typedef struct tilecmd_drawtile_t
@@ -121,7 +126,7 @@ typedef struct tilecmd_drawtile_t
     int32_t edges[3];
     int32_t edge_dxs[3];
     int32_t edge_dys[3];
-} tilecmd_drawtile_0edge_t;
+} tilecmd_drawtile_t;
 
 typedef struct framebuffer_t
 {
@@ -218,15 +223,121 @@ void delete_framebuffer(framebuffer_t* fb)
 // hack
 uint32_t g_Color;
 
-static void draw_coarse_block(framebuffer_t* fb, uint32_t tile_id, int32_t coarse_topleft_x, int32_t coarse_topleft_y, const tilecmd_drawtile_t* drawcmd)
+static void draw_coarse_block_smalltri(framebuffer_t* fb, uint32_t tile_id, int32_t coarse_topleft_x, int32_t coarse_topleft_y, const tilecmd_drawsmalltri_t* drawcmd)
 {
-    uint32_t num_test_edges = drawcmd->tilecmd_id - tilecmd_id_drawtile_0edge;
+	int32_t edges[3];
+	for (uint32_t v = 0; v < 3; v++)
+	{
+		edges[v] = drawcmd->edges[v];
+	}
 
-    int32_t edges[3];
-    for (uint32_t v = 0; v < num_test_edges; v++)
-    {
-        edges[v] = drawcmd->edges[v];
-    }
+	uint32_t tile_start_i = PIXELS_PER_TILE * tile_id;
+
+	for (
+		int32_t fineblock_y = coarse_topleft_y, fineblock_ybits = pdep_u32(coarse_topleft_y, TILE_Y_SWIZZLE_MASK);
+		fineblock_y < coarse_topleft_y + COARSE_BLOCK_WIDTH_IN_PIXELS;
+		fineblock_y++, fineblock_ybits = (fineblock_ybits - TILE_Y_SWIZZLE_MASK) & TILE_Y_SWIZZLE_MASK)
+	{
+		int32_t edges_row[3];
+		for (uint32_t v = 0; v < 3; v++)
+		{
+			edges_row[v] = edges[v];
+		}
+
+		for (
+			int32_t fineblock_x = coarse_topleft_x, fineblock_xbits = pdep_u32(coarse_topleft_x, TILE_X_SWIZZLE_MASK);
+			fineblock_x < coarse_topleft_x + COARSE_BLOCK_WIDTH_IN_PIXELS;
+			fineblock_x++, fineblock_xbits = (fineblock_xbits - TILE_X_SWIZZLE_MASK) & TILE_X_SWIZZLE_MASK)
+		{
+			uint32_t dst_i = tile_start_i + (fineblock_ybits | fineblock_xbits);
+
+			// TODO: rasterize whole fine blocks at a time rather than pixels at a time
+			int32_t pixel_discarded = 0;
+			for (uint32_t v = 0; v < 3; v++)
+			{
+				if (edges_row[v] >= 0)
+				{
+					pixel_discarded = 1;
+					break;
+				}
+			}
+
+			if (!pixel_discarded)
+			{
+				fb->backbuffer[dst_i] = g_Color;
+			}
+
+			for (uint32_t v = 0; v < 3; v++)
+			{
+				edges_row[v] += drawcmd->edge_dxs[v];
+			}
+		}
+
+		for (uint32_t v = 0; v < 3; v++)
+		{
+			edges[v] += drawcmd->edge_dys[v];
+		}
+	}
+}
+
+static void draw_tile_smalltri(framebuffer_t* fb, uint32_t tile_id, const tilecmd_drawsmalltri_t* drawcmd)
+{
+	int32_t coarse_edge_dxs[3];
+	int32_t coarse_edge_dys[3];
+	for (uint32_t v = 0; v < 3; v++)
+	{
+		coarse_edge_dxs[v] = drawcmd->edge_dxs[v] * COARSE_BLOCK_WIDTH_IN_PIXELS;
+		coarse_edge_dys[v] = drawcmd->edge_dys[v] * COARSE_BLOCK_WIDTH_IN_PIXELS;
+	}
+
+	int32_t edges[3];
+	for (uint32_t v = 0; v < 3; v++)
+	{
+		edges[v] = drawcmd->edges[v];
+	}
+
+	uint32_t tile_y = tile_id / fb->width_in_tiles;
+	uint32_t tile_x = tile_id - tile_y * fb->width_in_tiles;
+
+	// figure out which coarse blocks pass the reject and accept tests
+	for (int32_t cb_y = drawcmd->first_coarse_y; cb_y <= drawcmd->last_coarse_y; cb_y++)
+	{
+		int32_t row_edges[3];
+		for (uint32_t v = 0; v < 3; v++)
+		{
+			row_edges[v] = edges[v];
+		}
+
+		for (int32_t cb_x = drawcmd->first_coarse_x; cb_x <= drawcmd->last_coarse_x; cb_x++)
+		{
+			tilecmd_drawsmalltri_t drawtilecmd;
+
+			uint32_t coarse_topleft_x = tile_x * TILE_WIDTH_IN_PIXELS + cb_x * COARSE_BLOCK_WIDTH_IN_PIXELS;
+			uint32_t coarse_topleft_y = tile_y * TILE_WIDTH_IN_PIXELS + cb_y * COARSE_BLOCK_WIDTH_IN_PIXELS;
+			draw_coarse_block_smalltri(fb, tile_id, coarse_topleft_x, coarse_topleft_y, &drawtilecmd);
+
+			for (uint32_t v = 0; v < 3; v++)
+			{
+				row_edges[v] += coarse_edge_dxs[v];
+			}
+		}
+
+		for (uint32_t v = 0; v < 3; v++)
+		{
+			edges[v] += coarse_edge_dys[v];
+		}
+	}
+}
+
+static void draw_coarse_block_largetri(framebuffer_t* fb, uint32_t tile_id, int32_t coarse_topleft_x, int32_t coarse_topleft_y, const tilecmd_drawtile_t* drawcmd)
+{
+	uint32_t num_test_edges = drawcmd->tilecmd_id - tilecmd_id_drawtile_0edge;
+
+	int32_t edges[3];
+	for (uint32_t v = 0; v < num_test_edges; v++)
+	{
+		edges[v] = drawcmd->edges[v];
+	}
 
 	uint32_t tile_start_i = PIXELS_PER_TILE * tile_id;
 
@@ -242,14 +353,24 @@ static void draw_coarse_block(framebuffer_t* fb, uint32_t tile_id, int32_t coars
 		}
 
 		for (
-			int32_t fineblock_x = coarse_topleft_x, fineblock_xbits = pdep_u32(coarse_topleft_x, TILE_X_SWIZZLE_MASK); 
+			int32_t fineblock_x = coarse_topleft_x, fineblock_xbits = pdep_u32(coarse_topleft_x, TILE_X_SWIZZLE_MASK);
 			fineblock_x < coarse_topleft_x + COARSE_BLOCK_WIDTH_IN_PIXELS;
 			fineblock_x++, fineblock_xbits = (fineblock_xbits - TILE_X_SWIZZLE_MASK) & TILE_X_SWIZZLE_MASK)
 		{
 			uint32_t dst_i = tile_start_i + (fineblock_ybits | fineblock_xbits);
 
 			// TODO: rasterize whole fine blocks at a time rather than pixels at a time
-			if (edges_row[0] < 0 && edges_row[1] < 0 && edges_row[2] < 0)
+			int32_t pixel_discarded = 0;
+			for (uint32_t v = 0; v < num_test_edges; v++)
+			{
+				if (edges_row[v] >= 0)
+				{
+					pixel_discarded = 1;
+					break;
+				}
+			}
+
+			if (!pixel_discarded)
 			{
 				fb->backbuffer[dst_i] = g_Color;
 			}
@@ -265,10 +386,6 @@ static void draw_coarse_block(framebuffer_t* fb, uint32_t tile_id, int32_t coars
 			edges[v] += drawcmd->edge_dys[v];
 		}
 	}
-}
-
-static void draw_tile_smalltri(framebuffer_t* fb, uint32_t tile_id, const tilecmd_drawsmalltri_t* drawcmd)
-{
 }
 
 static void draw_tile_largetri(framebuffer_t* fb, uint32_t tile_id, const tilecmd_drawtile_t* drawcmd)
@@ -305,7 +422,7 @@ static void draw_tile_largetri(framebuffer_t* fb, uint32_t tile_id, const tilecm
 	uint32_t tile_x = tile_id - tile_y * fb->width_in_tiles;
 
     // figure out which coarse blocks pass the reject and accept tests
-    for (uint32_t cb_y = 0; cb_y < TILE_WIDTH_IN_COARSE_BLOCKS; cb_y++)
+    for (int32_t cb_y = 0; cb_y < TILE_WIDTH_IN_COARSE_BLOCKS; cb_y++)
     {
 		int32_t row_edges[3];
 		for (uint32_t v = 0; v < 3; v++)
@@ -321,7 +438,7 @@ static void draw_tile_largetri(framebuffer_t* fb, uint32_t tile_id, const tilecm
             edge_row_trivAccs[v] = edge_trivAccs[v];
         }
 
-        for (uint32_t cb_x = 0; cb_x < TILE_WIDTH_IN_COARSE_BLOCKS; cb_x++)
+        for (int32_t cb_x = 0; cb_x < TILE_WIDTH_IN_COARSE_BLOCKS; cb_x++)
         {
             // trivial reject if at least one edge doesn't cover the coarse block at all
 			int32_t trivially_rejected = 0;
@@ -373,7 +490,7 @@ static void draw_tile_largetri(framebuffer_t* fb, uint32_t tile_id, const tilecm
 
 				uint32_t coarse_topleft_x = tile_x * TILE_WIDTH_IN_PIXELS + cb_x * COARSE_BLOCK_WIDTH_IN_PIXELS;
 				uint32_t coarse_topleft_y = tile_y * TILE_WIDTH_IN_PIXELS + cb_y * COARSE_BLOCK_WIDTH_IN_PIXELS;
-                draw_coarse_block(fb, tile_id, coarse_topleft_x, coarse_topleft_y, &drawtilecmd);
+                draw_coarse_block_largetri(fb, tile_id, coarse_topleft_x, coarse_topleft_y, &drawtilecmd);
             }
 
 			for (uint32_t v = 0; v < 3; v++)
@@ -622,30 +739,132 @@ static void rasterize_triangle_fixed16_8_scalar(
         uint32_t last_tile_x = (bbox_max_x >> 8) / TILE_WIDTH_IN_PIXELS;
         uint32_t last_tile_y = (bbox_max_y >> 8) / TILE_WIDTH_IN_PIXELS;
 
+		uint32_t first_tile_px_x = (first_tile_x << 8) * TILE_WIDTH_IN_PIXELS;
+		uint32_t first_tile_px_y = (first_tile_y << 8) * TILE_WIDTH_IN_PIXELS;
+		uint32_t last_tile_px_x = (last_tile_x << 8) * TILE_WIDTH_IN_PIXELS;
+		uint32_t last_tile_px_y = (last_tile_y << 8) * TILE_WIDTH_IN_PIXELS;
+
         tilecmd_drawsmalltri_t drawsmalltricmd;
         drawsmalltricmd.tilecmd_id = tilecmd_id_drawsmalltri;
+
         drawsmalltricmd.verts[0] = verts[0];
         drawsmalltricmd.verts[1] = verts[1];
         drawsmalltricmd.verts[2] = verts[2];
 
-        uint32_t first_tile_id = first_tile_y * fb->width_in_tiles + first_tile_x;
+		// make vertices relative to the first tiles they're in
+		for (int32_t v = 0; v < 3; v++)
+		{
+			drawsmalltricmd.verts[v].x -= last_tile_px_x;
+			drawsmalltricmd.verts[v].y -= last_tile_px_y;
+		}
+
+		// compute edge equations with reduced precision thanks to being localized to the tiles
+
+		// |  x  y  z |
+		// | ax ay  0 |
+		// | bx by  0 |
+		// = ax*by - ay*bx
+		// eg: a = (px-v0), b = (v1-v0)
+		int32_t edges[3];
+		edges[0] = ((last_tile_px_x - verts[0].x) * (verts[1].y - verts[0].y) - (last_tile_px_y - verts[0].y) * (verts[1].x - verts[0].x)) >> 8;
+		edges[1] = ((last_tile_px_x - verts[1].x) * (verts[2].y - verts[1].y) - (last_tile_px_y - verts[1].y) * (verts[2].x - verts[1].x)) >> 8;
+		edges[2] = ((last_tile_px_x - verts[2].x) * (verts[0].y - verts[2].y) - (last_tile_px_y - verts[2].y) * (verts[0].x - verts[2].x)) >> 8;
+
+		// Top-left rule: shift top-left edges ever so slightly outward to make the top-left edges be the tie-breakers when rasterizing adjacent triangles
+		if ((verts[0].y == verts[1].y && verts[0].x < verts[1].x) || verts[0].y > verts[1].y) edges[0]--;
+		if ((verts[1].y == verts[2].y && verts[1].x < verts[2].x) || verts[1].y > verts[2].y) edges[1]--;
+		if ((verts[2].y == verts[0].y && verts[2].x < verts[0].x) || verts[2].y > verts[0].y) edges[2]--;
+
+		// offset the edge equations so they can be used to do a trivial reject test
+		// this means finding the corner of the first tile that is the most negative (the "most inside") the triangle
+		int32_t edge_dxs[3], edge_dys[3];
+		edge_dxs[0] = verts[1].y - verts[0].y;
+		edge_dys[0] = verts[0].x - verts[1].x;
+		edge_dxs[1] = verts[2].y - verts[1].y;
+		edge_dys[1] = verts[1].x - verts[2].x;
+		edge_dxs[2] = verts[0].y - verts[2].y;
+		edge_dys[2] = verts[2].x - verts[0].x;
+
+		for (int32_t v = 0; v < 3; v++)
+		{
+			drawsmalltricmd.edge_dxs[v] = edge_dxs[v];
+			drawsmalltricmd.edge_dys[v] = edge_dys[v];
+		}
+
+		for (int32_t v = 0; v < 3; v++)
+		{
+			drawsmalltricmd.edges[v] = edges[v] + edge_dxs[v] * (first_tile_x - last_tile_x) * TILE_WIDTH_IN_PIXELS;
+			drawsmalltricmd.first_coarse_x = ((first_tile_px_x - bbox_min_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
+			drawsmalltricmd.last_coarse_x = ((last_tile_px_x - bbox_min_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
+			if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS) {
+				drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
+			}
+			drawsmalltricmd.first_coarse_y = ((first_tile_px_y - bbox_min_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
+			drawsmalltricmd.last_coarse_y = ((last_tile_px_y - bbox_min_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
+			if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS) {
+				drawsmalltricmd.last_coarse_y = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
+			}
+		}
+		uint32_t first_tile_id = first_tile_y * fb->width_in_tiles + first_tile_x;
         framebuffer_push_tilecmd(fb, first_tile_id, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
 
         if (last_tile_x > first_tile_x)
         {
-            uint32_t tile_id_right = first_tile_id + 1;
+			for (int32_t v = 0; v < 3; v++)
+			{
+				drawsmalltricmd.edges[v] = edges[v] + edge_dxs[v] * TILE_WIDTH_IN_PIXELS;
+				drawsmalltricmd.first_coarse_x = ((first_tile_px_x - bbox_min_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS - TILE_WIDTH_IN_COARSE_BLOCKS;
+				drawsmalltricmd.last_coarse_x = ((last_tile_px_x - bbox_min_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
+				if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS) {
+					drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
+				}
+				drawsmalltricmd.first_coarse_y = ((first_tile_px_y - bbox_min_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
+				drawsmalltricmd.last_coarse_y = ((last_tile_px_y - bbox_min_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
+				if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS) {
+					drawsmalltricmd.last_coarse_y = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
+				}
+			}
+			uint32_t tile_id_right = first_tile_id + 1;
             framebuffer_push_tilecmd(fb, tile_id_right, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
         }
 
         if (last_tile_y > first_tile_y)
         {
-            uint32_t tile_id_down = first_tile_id + fb->width_in_tiles;
+			for (int32_t v = 0; v < 3; v++)
+			{
+				drawsmalltricmd.edges[v] = edges[v] + edge_dys[v] * TILE_WIDTH_IN_PIXELS;
+				drawsmalltricmd.first_coarse_x = ((first_tile_px_x - bbox_min_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
+				drawsmalltricmd.last_coarse_x = ((last_tile_px_x - bbox_min_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
+				if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS) {
+					drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
+				}
+				drawsmalltricmd.first_coarse_y = ((first_tile_px_y - bbox_min_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS - TILE_WIDTH_IN_COARSE_BLOCKS;
+				drawsmalltricmd.last_coarse_y = ((last_tile_px_y - bbox_min_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
+				if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS) {
+					drawsmalltricmd.last_coarse_y = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
+				}
+			}
+			uint32_t tile_id_down = first_tile_id + fb->width_in_tiles;
             framebuffer_push_tilecmd(fb, tile_id_down, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
         }
 
         if (last_tile_x > first_tile_x && last_tile_y > first_tile_y)
         {
-            uint32_t tile_id_downright = first_tile_id + 1 + fb->width_in_tiles;
+			for (int32_t v = 0; v < 3; v++)
+			{
+				drawsmalltricmd.edges[v] = edges[v] + (edge_dxs[v] + edge_dys[v]) * TILE_WIDTH_IN_PIXELS;
+				drawsmalltricmd.first_coarse_x = ((first_tile_px_x - bbox_min_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS - TILE_WIDTH_IN_COARSE_BLOCKS;
+				drawsmalltricmd.last_coarse_x = ((last_tile_px_x - bbox_min_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
+				if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS) {
+					drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
+				}
+				drawsmalltricmd.first_coarse_y = ((first_tile_px_y - bbox_min_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS - TILE_WIDTH_IN_COARSE_BLOCKS;
+				drawsmalltricmd.last_coarse_y = ((last_tile_px_y - bbox_min_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
+				if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS) {
+					drawsmalltricmd.last_coarse_y = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
+				}
+			}
+			uint32_t tile_id_downright = first_tile_id + 1 + fb->width_in_tiles;
             framebuffer_push_tilecmd(fb, tile_id_downright, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
         }
     }
@@ -992,6 +1211,57 @@ void run_rasterizer_unit_tests()
 
 		g_Color = 0xFFFF00FF;
 		draw(fb, verts, 3);
+
+		// make sure all caches are flushed and yada yada
+		framebuffer_resolve(fb);
+
+		// convert framebuffer from bgra to rgba for stbi_image_write
+		{
+			uint8_t* rgba8_pixels = (uint8_t*)malloc(fbwidth * fbheight * 4);
+			assert(rgba8_pixels);
+
+			// readback framebuffer contents
+			framebuffer_pack_row_major(fb, 0, 0, fbwidth, fbheight, pixelformat_r8g8b8a8_unorm, rgba8_pixels);
+
+			if (!stbi_write_png("output.png", fbwidth, fbheight, 4, rgba8_pixels, fbwidth * 4))
+			{
+				fprintf(stderr, "Failed to write image\n");
+				exit(1);
+			}
+
+			free(rgba8_pixels);
+		}
+
+		system("output.png");
+
+		delete_framebuffer(fb);
+	}
+
+	// small triangles test
+	{
+		uint32_t fbwidth = TILE_WIDTH_IN_PIXELS * 2;
+		uint32_t fbheight = TILE_WIDTH_IN_PIXELS * 2;
+		framebuffer_t* fb = new_framebuffer(fbwidth, fbheight);
+
+		int32_t verts[] = {
+			// triangle at top left of framebuffer
+			0 << 8, 0 << 8, 0, 1 << 8,
+			40 << 8, 0 << 8, 0, 1 << 8,
+			0 << 8, 40 << 8, 0, 1 << 8,
+
+			// triangle in between the first two tiles
+			(TILE_WIDTH_IN_PIXELS - 10) << 8, 0 << 8, 0, 1 << 8,
+			(TILE_WIDTH_IN_PIXELS - 10 + 40) << 8, 0 << 8, 0, 1 << 8,
+			(TILE_WIDTH_IN_PIXELS - 10) << 8, 40 << 8, 0, 1 << 8,
+
+			// triangle in between the first four tiles
+			(TILE_WIDTH_IN_PIXELS - 10) << 8, (TILE_WIDTH_IN_PIXELS - 10) << 8, 0, 1 << 8,
+			(TILE_WIDTH_IN_PIXELS - 10 + 40) << 8, (TILE_WIDTH_IN_PIXELS - 10) << 8, 0, 1 << 8,
+			(TILE_WIDTH_IN_PIXELS - 10) << 8, (TILE_WIDTH_IN_PIXELS - 10 + 40) << 8, 0, 1 << 8,
+		};
+
+		g_Color = 0xFFFF00FF;
+		draw(fb, verts, sizeof(verts)/sizeof(*verts)/4);
 
 		// make sure all caches are flushed and yada yada
 		framebuffer_resolve(fb);
