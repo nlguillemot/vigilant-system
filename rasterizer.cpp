@@ -130,7 +130,8 @@ typedef struct tilecmd_drawtile_t
 
 typedef struct framebuffer_t
 {
-    pixel_t* backbuffer;
+    uint32_t* backbuffer;
+    uint32_t* depthbuffer;
     
     uint32_t* tile_cmdpool;
     tile_cmdbuf_t* tile_cmdbufs;
@@ -184,11 +185,17 @@ framebuffer_t* new_framebuffer(uint32_t width, uint32_t height)
     fb->pixels_per_row_of_tiles = padded_width_in_pixels * TILE_WIDTH_IN_PIXELS;
     fb->pixels_per_slice = padded_height_in_pixels / TILE_WIDTH_IN_PIXELS * fb->pixels_per_row_of_tiles;
 
-    fb->backbuffer = (pixel_t*)malloc(fb->pixels_per_slice * sizeof(pixel_t));
+    fb->backbuffer = (uint32_t*)malloc(fb->pixels_per_slice * sizeof(uint32_t));
     assert(fb->backbuffer);
- 
+
     // clear to black/transparent initially
-    memset(fb->backbuffer, 0, fb->pixels_per_slice * sizeof(pixel_t));
+    memset(fb->backbuffer, 0, fb->pixels_per_slice * sizeof(uint32_t));
+
+    fb->depthbuffer = (uint32_t*)malloc(fb->pixels_per_slice * sizeof(uint32_t));
+    assert(fb->depthbuffer);
+    
+    // clear to infinity initially
+    memset(fb->depthbuffer, 0xFF, fb->pixels_per_slice * sizeof(uint32_t));
 
     // allocate command lists for each tile
     fb->tile_cmdpool = (uint32_t*)malloc(fb->total_num_tiles * TILE_COMMAND_BUFFER_SIZE_IN_DWORDS * sizeof(uint32_t));
@@ -658,7 +665,7 @@ void framebuffer_pack_row_major(framebuffer_t* fb, uint32_t x, uint32_t y, uint3
 					uint32_t dst_i = rel_pixel_y * width + rel_pixel_x;
 
                     uint32_t src_i = curr_tile_start + (pixel_y_bits | pixel_x_bits);
-                    pixel_t src = fb->backbuffer[src_i];
+                    uint32_t src = fb->backbuffer[src_i];
                     if (format == pixelformat_r8g8b8a8_unorm)
                     {
                         uint8_t* dst = (uint8_t*)data + dst_i * 4;

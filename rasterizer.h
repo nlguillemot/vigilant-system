@@ -3,7 +3,6 @@
 #include <stdint.h>
 
 struct framebuffer_t;
-typedef uint32_t pixel_t;
 
 typedef enum pixelformat_t
 {
