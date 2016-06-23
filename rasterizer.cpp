@@ -777,7 +777,7 @@ static void rasterize_triangle(
         verts[v].w = clipVerts[v].w;
         rcp_ws[v] = one_over_w;
     }
-
+	
     // get window coordinates bounding box
     int32_t bbox_min_x = verts[0].x;
     if (verts[1].x < bbox_min_x) bbox_min_x = verts[1].x;
@@ -985,7 +985,7 @@ static void rasterize_triangle(
 
         // offset the edge equations so they can be used to do a trivial reject test
         // this means finding the corner of the first tile that is the most negative (the "most inside") the triangle
-        int32_t edge_dxs[3], edge_dys[3];
+        int64_t edge_dxs[3], edge_dys[3];
         edge_dxs[0] = verts[1].y - verts[0].y;
         edge_dys[0] = verts[0].x - verts[1].x;
         edge_dxs[1] = verts[2].y - verts[1].y;
