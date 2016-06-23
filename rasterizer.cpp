@@ -698,7 +698,7 @@ void framebuffer_pack_row_major(framebuffer_t* fb, uint32_t x, uint32_t y, uint3
     }
 }
 
-static void rasterize_triangle_fixed16_8_scalar(
+static void rasterize_triangle(
     framebuffer_t* fb,
     xyzw_i32_t verts[3])
 {
@@ -791,7 +791,7 @@ static void rasterize_triangle_fixed16_8_scalar(
 		edge_dys[1] = verts[1].x - verts[2].x;
 		edge_dxs[2] = verts[0].y - verts[2].y;
 		edge_dys[2] = verts[2].x - verts[0].x;
-
+		
 		for (int32_t v = 0; v < 3; v++)
 		{
 			drawsmalltricmd.edge_dxs[v] = edge_dxs[v];
@@ -1056,7 +1056,7 @@ void draw(
         verts[2].z = vertices[cmpt_id + 10];
         verts[2].w = vertices[cmpt_id + 11];
 
-        rasterize_triangle_fixed16_8_scalar(fb, verts);
+		rasterize_triangle(fb, verts);
     }
 }
 
@@ -1092,7 +1092,7 @@ void draw_indexed(
         verts[2].z = vertices[cmpt_i2 + 2];
         verts[2].w = vertices[cmpt_i2 + 3];
 
-        rasterize_triangle_fixed16_8_scalar(fb, verts);
+		rasterize_triangle(fb, verts);
     }
 }
 
