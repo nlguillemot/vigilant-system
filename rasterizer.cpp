@@ -19,7 +19,7 @@
 #endif
 
 // runs unit tests automatically when the library is used
-#define RASTERIZER_UNIT_TESTS
+//#define RASTERIZER_UNIT_TESTS
 
 #ifdef RASTERIZER_UNIT_TESTS
 void run_rasterizer_unit_tests();
@@ -139,7 +139,7 @@ static int32_t s1516_div(int32_t a, int32_t b)
         temp += b / 2;
     else
         temp -= b / 2;
-    result = (int32_t)(temp / b);
+    result = (int32_t)(temp/ b);
 
     return result;
 }

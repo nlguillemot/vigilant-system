@@ -6,6 +6,9 @@
 #include "stb_image_write.h"
 
 #include "rasterizer.h"
+#include "benchmark.h"
+
+//#define _BENCHMARK
 
 static int32_t s1516_add(int32_t a, int32_t b)
 {
@@ -70,11 +73,17 @@ static int32_t s1516_div(int32_t a, int32_t b)
 
 int main()
 {
-    int fbwidth = 256;
-    int fbheight = 256;
+	int fbwidth = 1024;
+	int fbheight = 768;
 
     framebuffer_t* fb = new_framebuffer(fbwidth, fbheight);
 
+#ifdef _BENCHMARK
+	load_model("cube.obj", fbwidth, fbheight);
+	g_Color = 0xFF00FFFF;
+	draw_model("cube.vig", fb);
+	framebuffer_resolve(fb);
+#else
     int32_t radius = s1516_div(2 << 16, 4 << 16);
 
     // rasterize triangles
@@ -110,6 +119,7 @@ int main()
 
     // make sure all caches are flushed and yada yada
     framebuffer_resolve(fb);
+#endif
 
     // convert framebuffer from bgra to rgba for stbi_image_write
     {
@@ -132,6 +142,8 @@ int main()
     system("output.png");
 
     delete_framebuffer(fb);
+
+
 
     return 0;
 }

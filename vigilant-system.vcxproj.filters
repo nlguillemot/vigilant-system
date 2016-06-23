@@ -3,9 +3,11 @@
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="rasterizer.cpp" />
+    <ClCompile Include="benchmark.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stb_image_write.h" />
     <ClInclude Include="rasterizer.h" />
+    <ClInclude Include="benchmark.h" />
   </ItemGroup>
 </Project>
