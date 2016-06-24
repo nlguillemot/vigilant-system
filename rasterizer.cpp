@@ -816,8 +816,8 @@ static void rasterize_triangle(
 
     // "small" triangles are no wider than a tile.
     int32_t is_large =
-        (bbox_max_x - bbox_min_x) >= TILE_WIDTH_IN_PIXELS ||
-        (bbox_max_y - bbox_min_y) >= TILE_WIDTH_IN_PIXELS;
+        (bbox_max_x - bbox_min_x) >= (TILE_WIDTH_IN_PIXELS << 8) ||
+        (bbox_max_y - bbox_min_y) >= (TILE_WIDTH_IN_PIXELS << 8);
 
     if (!is_large)
     {
@@ -1224,7 +1224,7 @@ void run_rasterizer_unit_tests()
     {
         uint32_t w = TILE_WIDTH_IN_PIXELS * 2;
         uint32_t h = TILE_WIDTH_IN_PIXELS * 2;
-        
+
         framebuffer_t* fb = new_framebuffer(w, h);
         uint8_t* rowmajor_data = (uint8_t*)malloc(w * h * 4);
 
@@ -1245,9 +1245,9 @@ void run_rasterizer_unit_tests()
         {
             fb->backbuffer[i] = i;
         }
-        
+
         framebuffer_pack_row_major(fb, 0, 0, w, h, pixelformat_r8g8b8a8_unorm, rowmajor_data);
-        
+
         for (uint32_t y = 0; y < h; y++)
         {
             uint32_t tile_y = y / TILE_WIDTH_IN_PIXELS;
@@ -1260,7 +1260,7 @@ void run_rasterizer_unit_tests()
 
                 uint32_t tile_relative_x = x - tile_x * TILE_WIDTH_IN_PIXELS;
                 uint32_t tile_relative_y = y - tile_y * TILE_WIDTH_IN_PIXELS;
-				uint32_t rowmajor_i = y * w + x;
+                uint32_t rowmajor_i = y * w + x;
 
                 uint32_t xmask = TILE_X_SWIZZLE_MASK;
                 uint32_t ymask = TILE_Y_SWIZZLE_MASK;
@@ -1275,40 +1275,40 @@ void run_rasterizer_unit_tests()
             }
         }
 
-		// do the test again but this time readback just one tile (that isn't the top left one)
-		framebuffer_pack_row_major(fb, TILE_WIDTH_IN_PIXELS, TILE_WIDTH_IN_PIXELS, TILE_WIDTH_IN_PIXELS, TILE_WIDTH_IN_PIXELS, pixelformat_r8g8b8a8_unorm, rowmajor_data);
+        // do the test again but this time readback just one tile (that isn't the top left one)
+        framebuffer_pack_row_major(fb, TILE_WIDTH_IN_PIXELS, TILE_WIDTH_IN_PIXELS, TILE_WIDTH_IN_PIXELS, TILE_WIDTH_IN_PIXELS, pixelformat_r8g8b8a8_unorm, rowmajor_data);
 
-		for (uint32_t rel_y = 0; rel_y < TILE_WIDTH_IN_PIXELS; rel_y++)
-		{
-			uint32_t y = TILE_WIDTH_IN_PIXELS + rel_y;
+        for (uint32_t rel_y = 0; rel_y < TILE_WIDTH_IN_PIXELS; rel_y++)
+        {
+            uint32_t y = TILE_WIDTH_IN_PIXELS + rel_y;
 
-			uint32_t tile_y = y / TILE_WIDTH_IN_PIXELS;
+            uint32_t tile_y = y / TILE_WIDTH_IN_PIXELS;
 
-			for (uint32_t rel_x = 0; rel_x < TILE_WIDTH_IN_PIXELS; rel_x++)
-			{
-				uint32_t x = TILE_WIDTH_IN_PIXELS + rel_x;
+            for (uint32_t rel_x = 0; rel_x < TILE_WIDTH_IN_PIXELS; rel_x++)
+            {
+                uint32_t x = TILE_WIDTH_IN_PIXELS + rel_x;
 
-				uint32_t tile_x = x / TILE_WIDTH_IN_PIXELS;
-				uint32_t tile_i = tile_y * (fb->pixels_per_row_of_tiles / PIXELS_PER_TILE) + tile_x;
-				uint32_t topleft_pixel_i = tile_i * PIXELS_PER_TILE;
+                uint32_t tile_x = x / TILE_WIDTH_IN_PIXELS;
+                uint32_t tile_i = tile_y * (fb->pixels_per_row_of_tiles / PIXELS_PER_TILE) + tile_x;
+                uint32_t topleft_pixel_i = tile_i * PIXELS_PER_TILE;
 
-				uint32_t tile_relative_x = x - tile_x * TILE_WIDTH_IN_PIXELS;
-				uint32_t tile_relative_y = y - tile_y * TILE_WIDTH_IN_PIXELS;
-				uint32_t rowmajor_i = tile_relative_y * TILE_WIDTH_IN_PIXELS + tile_relative_x;
+                uint32_t tile_relative_x = x - tile_x * TILE_WIDTH_IN_PIXELS;
+                uint32_t tile_relative_y = y - tile_y * TILE_WIDTH_IN_PIXELS;
+                uint32_t rowmajor_i = tile_relative_y * TILE_WIDTH_IN_PIXELS + tile_relative_x;
 
-				uint32_t xmask = TILE_X_SWIZZLE_MASK;
-				uint32_t ymask = TILE_Y_SWIZZLE_MASK;
-				uint32_t xbits = pdep_u32(x, xmask);
-				uint32_t ybits = pdep_u32(y, ymask);
-				uint32_t swizzled_i = topleft_pixel_i + xbits + ybits;
+                uint32_t xmask = TILE_X_SWIZZLE_MASK;
+                uint32_t ymask = TILE_Y_SWIZZLE_MASK;
+                uint32_t xbits = pdep_u32(x, xmask);
+                uint32_t ybits = pdep_u32(y, ymask);
+                uint32_t swizzled_i = topleft_pixel_i + xbits + ybits;
 
-				assert(rowmajor_data[rowmajor_i * 4 + 0] == ((fb->backbuffer[swizzled_i] & 0x00FF0000) >> 16));
-				assert(rowmajor_data[rowmajor_i * 4 + 1] == ((fb->backbuffer[swizzled_i] & 0x0000FF00) >> 8));
-				assert(rowmajor_data[rowmajor_i * 4 + 2] == ((fb->backbuffer[swizzled_i] & 0x000000FF) >> 0));
-				assert(rowmajor_data[rowmajor_i * 4 + 3] == ((fb->backbuffer[swizzled_i] & 0xFF000000) >> 24));
-			}
-		}
-        
+                assert(rowmajor_data[rowmajor_i * 4 + 0] == ((fb->backbuffer[swizzled_i] & 0x00FF0000) >> 16));
+                assert(rowmajor_data[rowmajor_i * 4 + 1] == ((fb->backbuffer[swizzled_i] & 0x0000FF00) >> 8));
+                assert(rowmajor_data[rowmajor_i * 4 + 2] == ((fb->backbuffer[swizzled_i] & 0x000000FF) >> 0));
+                assert(rowmajor_data[rowmajor_i * 4 + 3] == ((fb->backbuffer[swizzled_i] & 0xFF000000) >> 24));
+            }
+        }
+
         free(rowmajor_data);
         delete_framebuffer(fb);
     }
