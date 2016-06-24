@@ -771,8 +771,15 @@ static void rasterize_triangle(
         assert(clipVerts[v].w > 0);
 
         int32_t one_over_w = s1516_div(1 << 16, clipVerts[v].w);
+
+        // convert to 16.8 window coordinates
         verts[v].x = ((s1516_mul(clipVerts[v].x, one_over_w) + (1 << 16)) / 2 * fb->width_in_pixels) >> 8;
         verts[v].y = ((s1516_mul(-clipVerts[v].y, one_over_w) + (1 << 16)) / 2 * fb->height_in_pixels) >> 8;
+
+        // for now assuming that there's no overflow when converting to 16.8
+        assert((verts[v].x & 0xFF000000) == 0);
+        assert((verts[v].y & 0xFF000000) == 0);
+
         verts[v].z = s1516_mul(clipVerts[v].z, one_over_w);
         verts[v].w = clipVerts[v].w;
         rcp_ws[v] = one_over_w;
@@ -1073,9 +1080,9 @@ static void rasterize_triangle(
                         // in the meantime, just check that at least the checked edges are within range.
                         if (v < num_tests_necessary)
                         {
-							assert(drawtilecmd.edges[v] == (int32_t)drawtilecmd.edges[v]);
-							assert(drawtilecmd.edge_dxs[v] == (int32_t)drawtilecmd.edge_dxs[v]);
-							assert(drawtilecmd.edge_dys[v] == (int32_t)drawtilecmd.edge_dys[v]);
+							assert(tile_i_edges[v] == (int64_t)((int32_t)tile_i_edges[v]));
+							assert(edge_dxs[v] == (int64_t)((int32_t)edge_dxs[v]));
+							assert(edge_dys[v] == (int64_t)((int32_t)edge_dys[v]));
                         }
 
                         drawtilecmd.edges[v] = (int32_t)tile_i_edges[rotated_v];
