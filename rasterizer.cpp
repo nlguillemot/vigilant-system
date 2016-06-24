@@ -848,32 +848,38 @@ static void rasterize_triangle(
 			drawsmalltricmd.verts[v].y -= last_tile_px_y;
 		}
 
+        int32_t triarea2 = (verts[1].x - verts[0].x) * (verts[2].y - verts[0].y) - (verts[1].y - verts[0].y) * (verts[2].x - verts[0].x);
+        int32_t rcp_triarea2 = s1516_div(1 << 16, triarea2);
+
 		// compute edge equations with reduced precision thanks to being localized to the tiles
 
-		// |  x  y  z |
-		// | ax ay  0 |
-		// | bx by  0 |
-		// = ax*by - ay*bx
-		// eg: a = (px-v0), b = (v1-v0)
 		int32_t edges[3];
-		edges[0] = ((last_tile_px_x - verts[0].x) * (verts[1].y - verts[0].y) - (last_tile_px_y - verts[0].y) * (verts[1].x - verts[0].x)) >> 8;
-		edges[1] = ((last_tile_px_x - verts[1].x) * (verts[2].y - verts[1].y) - (last_tile_px_y - verts[1].y) * (verts[2].x - verts[1].x)) >> 8;
-		edges[2] = ((last_tile_px_x - verts[2].x) * (verts[0].y - verts[2].y) - (last_tile_px_y - verts[2].y) * (verts[0].x - verts[2].x)) >> 8;
+        int32_t edge_dxs[3], edge_dys[3];
+        for (int32_t v = 0; v < 3; v++)
+        {
+            int32_t v1 = (v + 1) % 3;
+            int32_t v2 = (v + 2) % 3;
 
-		// Top-left rule: shift top-left edges ever so slightly outward to make the top-left edges be the tie-breakers when rasterizing adjacent triangles
-		if ((verts[0].y == verts[1].y && verts[0].x < verts[1].x) || verts[0].y > verts[1].y) edges[0]--;
-		if ((verts[1].y == verts[2].y && verts[1].x < verts[2].x) || verts[1].y > verts[2].y) edges[1]--;
-		if ((verts[2].y == verts[0].y && verts[2].x < verts[0].x) || verts[2].y > verts[0].y) edges[2]--;
+            // find how the edge equation varies along x and y
+            edge_dxs[v] = verts[v1].y - verts[v].y;
+            edge_dys[v] = verts[v].x - verts[v1].x;
 
-		// offset the edge equations so they can be used to do a trivial reject test
-		// this means finding the corner of the first tile that is the most negative (the "most inside") the triangle
-		int32_t edge_dxs[3], edge_dys[3];
-		edge_dxs[0] = verts[1].y - verts[0].y;
-		edge_dys[0] = verts[0].x - verts[1].x;
-		edge_dxs[1] = verts[2].y - verts[1].y;
-		edge_dys[1] = verts[1].x - verts[2].x;
-		edge_dxs[2] = verts[0].y - verts[2].y;
-		edge_dys[2] = verts[2].x - verts[0].x;
+            // convert to s15.16 and divide by 2*TriArea
+            edge_dxs[v] = s1516_mul(edge_dxs[v] << 8, rcp_triarea2);
+            edge_dys[v] = s1516_mul(edge_dys[v] << 8, rcp_triarea2);
+
+            // compute edge equation
+            // |  x  y  z |
+            // | ax ay  0 |
+            // | bx by  0 |
+            // = ax*by - ay*bx
+            // eg: a = (px-v0), b = (v1-v0)
+            // note: reusing edge_dxs and edge_dys to incorporate the 1/(2TriArea) term
+            edges[v] = s1516_mul((last_tile_px_x - verts[v].x) << 8, edge_dxs[v]) - s1516_mul((last_tile_px_y - verts[v].y) << 8, -edge_dys[v]);
+
+            // Top-left rule: shift top-left edges ever so slightly outward to make the top-left edges be the tie-breakers when rasterizing adjacent triangles
+            if ((verts[v].y == verts[v1].y && verts[v].x < verts[v1].x) || verts[v].y > verts[v1].y) edges[v]--;
+        }
 		
 		for (int32_t v = 0; v < 3; v++)
 		{
@@ -975,30 +981,50 @@ static void rasterize_triangle(
         // this results in some extra overhead, but it's not a big deal when you consider that this happens only for large triangles.
         // The tens of thousands of pixels that large triangles generate outweigh the cost of slightly more expensive setup.
 
-        // |  x  y  z |
-        // | ax ay  0 |
-        // | bx by  0 |
-        // = ax*by - ay*bx
-		// eg: a = (px-v0), b = (v1-v0)
+        int64_t triarea2 = ((int64_t)verts[1].x - verts[0].x) * ((int64_t)verts[2].y - verts[0].y) - ((int64_t)verts[1].y - verts[0].y) * ((int64_t)verts[2].x - verts[0].x);
+        int64_t rcp_triarea2;
+        {
+            // pre-multiply the base
+            int64_t temp = (int64_t)1 << 32;
+            // Rounding: mid values are rounded up (down for negative values)
+            if ((temp >= 0 && triarea2 >= 0) || (temp < 0 && triarea2 < 0))
+                temp += triarea2 / 2;
+            else
+                temp -= triarea2 / 2;
+            rcp_triarea2 = temp / triarea2;
+        }
+
         int64_t edges[3];
-		edges[0] = (((int64_t)first_tile_px_x - verts[0].x) * (verts[1].y - verts[0].y) - ((int64_t)first_tile_px_y - verts[0].y) * (verts[1].x - verts[0].x)) >> 8;
-		edges[1] = (((int64_t)first_tile_px_x - verts[1].x) * (verts[2].y - verts[1].y) - ((int64_t)first_tile_px_y - verts[1].y) * (verts[2].x - verts[1].x)) >> 8;
-		edges[2] = (((int64_t)first_tile_px_x - verts[2].x) * (verts[0].y - verts[2].y) - ((int64_t)first_tile_px_y - verts[2].y) * (verts[0].x - verts[2].x)) >> 8;
-
-        // Top-left rule: shift top-left edges ever so slightly outward to make the top-left edges be the tie-breakers when rasterizing adjacent triangles
-		if ((verts[0].y == verts[1].y && verts[0].x < verts[1].x) || verts[0].y > verts[1].y) edges[0]--;
-		if ((verts[1].y == verts[2].y && verts[1].x < verts[2].x) || verts[1].y > verts[2].y) edges[1]--;
-		if ((verts[2].y == verts[0].y && verts[2].x < verts[0].x) || verts[2].y > verts[0].y) edges[2]--;
-
-        // offset the edge equations so they can be used to do a trivial reject test
-        // this means finding the corner of the first tile that is the most negative (the "most inside") the triangle
         int64_t edge_dxs[3], edge_dys[3];
-        edge_dxs[0] = verts[1].y - verts[0].y;
-        edge_dys[0] = verts[0].x - verts[1].x;
-        edge_dxs[1] = verts[2].y - verts[1].y;
-        edge_dys[1] = verts[1].x - verts[2].x;
-        edge_dxs[2] = verts[0].y - verts[2].y;
-        edge_dys[2] = verts[2].x - verts[0].x;
+        for (int32_t v = 0; v < 3; v++)
+        {
+            int32_t v1 = (v + 1) % 3;
+            int32_t v2 = (v + 2) % 3;
+
+            // find how the edge equation varies along x and y
+            edge_dxs[v] = verts[v1].y - verts[v].y;
+            edge_dys[v] = verts[v].x - verts[v1].x;
+
+            // convert to 16 base fixed point and divide by 2*TriArea
+            edge_dxs[v] = (edge_dxs[v] << 16) * rcp_triarea2;
+            edge_dys[v] = (edge_dys[v] << 16) * rcp_triarea2;
+            
+            // Rounding: mid values are rounded up and Correct by dividing by base
+            edge_dxs[v] = (edge_dxs[v] + (1 << 15)) >> 16;
+            edge_dys[v] = (edge_dys[v] + (1 << 15)) >> 16;
+
+            // compute edge equation
+            // |  x  y  z |
+            // | ax ay  0 |
+            // | bx by  0 |
+            // = ax*by - ay*bx
+            // eg: a = (px-v0), b = (v1-v0)
+            // note: reusing edge_dxs and edge_dys to incorporate the 1/(2TriArea) term
+            edges[v] = (((((int64_t)first_tile_px_x - verts[v].x) << 8) * edge_dxs[v] + (1 << 15)) >> 16) - (((((int64_t)first_tile_px_y - verts[v].y) << 8) * -edge_dys[v] + (1 << 15)) >> 16);
+
+            // Top-left rule: shift top-left edges ever so slightly outward to make the top-left edges be the tie-breakers when rasterizing adjacent triangles
+            if ((verts[v].y == verts[v1].y && verts[v].x < verts[v1].x) || verts[v].y > verts[v1].y) edges[v]--;
+        }
 
         int64_t tile_edge_dxs[3];
         int64_t tile_edge_dys[3];
