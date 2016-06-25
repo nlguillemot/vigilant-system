@@ -20,7 +20,7 @@ void load_model(const std::string& modelfile, int fbwidth, int fbheight) {
 
 	bool ret = tinyobj::LoadObj(shapes, mats, error, modelfile.c_str(), nullptr, 3u);
 
-	if (!error.empty()) {
+	if (!ret) {
 		fprintf(stderr, "Error loading model file %s.\n", modelfile.c_str());
 		exit(1);
 	}

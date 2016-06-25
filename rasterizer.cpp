@@ -361,7 +361,9 @@ static void draw_tile_smalltri(framebuffer_t* fb, uint32_t tile_id, const tilecm
 	int32_t edges[3];
 	for (uint32_t v = 0; v < 3; v++)
 	{
-		edges[v] = drawcmd->edges[v];
+        edges[v] = drawcmd->edges[v]
+            + drawcmd->first_coarse_x * coarse_edge_dxs[v]
+            + drawcmd->first_coarse_y * coarse_edge_dys[v];
 	}
 
 	uint32_t tile_y = tile_id / fb->width_in_tiles;
@@ -378,11 +380,18 @@ static void draw_tile_smalltri(framebuffer_t* fb, uint32_t tile_id, const tilecm
 
 		for (int32_t cb_x = drawcmd->first_coarse_x; cb_x <= drawcmd->last_coarse_x; cb_x++)
 		{
-			tilecmd_drawsmalltri_t drawtilecmd;
+			tilecmd_drawsmalltri_t cbargs;
+
+            cbargs = *drawcmd;
+            
+            for (int32_t v = 0; v < 3; v++)
+            {
+                cbargs.edges[v] = row_edges[v];
+            }
 
 			uint32_t coarse_topleft_x = tile_x * TILE_WIDTH_IN_PIXELS + cb_x * COARSE_BLOCK_WIDTH_IN_PIXELS;
 			uint32_t coarse_topleft_y = tile_y * TILE_WIDTH_IN_PIXELS + cb_y * COARSE_BLOCK_WIDTH_IN_PIXELS;
-			draw_coarse_block_smalltri(fb, tile_id, coarse_topleft_x, coarse_topleft_y, &drawtilecmd);
+			draw_coarse_block_smalltri(fb, tile_id, coarse_topleft_x, coarse_topleft_y, &cbargs);
 
 			for (uint32_t v = 0; v < 3; v++)
 			{
@@ -828,11 +837,18 @@ static void rasterize_triangle(
         uint32_t first_tile_y = (bbox_min_y >> 8) / TILE_WIDTH_IN_PIXELS;
         uint32_t last_tile_x = (bbox_max_x >> 8) / TILE_WIDTH_IN_PIXELS;
         uint32_t last_tile_y = (bbox_max_y >> 8) / TILE_WIDTH_IN_PIXELS;
-
+        
+        // pixel coordinates of the first and last tile of the (up to) 2x2 block of tiles
 		uint32_t first_tile_px_x = (first_tile_x << 8) * TILE_WIDTH_IN_PIXELS;
 		uint32_t first_tile_px_y = (first_tile_y << 8) * TILE_WIDTH_IN_PIXELS;
 		uint32_t last_tile_px_x = (last_tile_x << 8) * TILE_WIDTH_IN_PIXELS;
 		uint32_t last_tile_px_y = (last_tile_y << 8) * TILE_WIDTH_IN_PIXELS;
+
+        // range of coarse blocks affected (relative to top left of 2x2 tile block)
+        uint32_t first_rel_cb_x = ((bbox_min_x - first_tile_px_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
+        uint32_t first_rel_cb_y = ((bbox_min_y - first_tile_px_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
+        uint32_t last_rel_cb_x = ((bbox_max_x - first_tile_px_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
+        uint32_t last_rel_cb_y = ((bbox_max_y - first_tile_px_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
 
         tilecmd_drawsmalltri_t drawsmalltricmd;
         drawsmalltricmd.tilecmd_id = tilecmd_id_drawsmalltri;
@@ -841,7 +857,7 @@ static void rasterize_triangle(
         drawsmalltricmd.verts[1] = verts[1];
         drawsmalltricmd.verts[2] = verts[2];
 
-		// make vertices relative to the first tiles they're in
+		// make vertices relative to the last tile they're in
 		for (int32_t v = 0; v < 3; v++)
 		{
 			drawsmalltricmd.verts[v].x -= last_tile_px_x;
@@ -875,7 +891,8 @@ static void rasterize_triangle(
             // = ax*by - ay*bx
             // eg: a = (px-v0), b = (v1-v0)
             // note: reusing edge_dxs and edge_dys to incorporate the 1/(2TriArea) term
-            edges[v] = s1516_mul((last_tile_px_x - verts[v].x) << 8, edge_dxs[v]) - s1516_mul((last_tile_px_y - verts[v].y) << 8, -edge_dys[v]);
+            // note: evaluated at px = (0,0) because the vertices are relative to the last tile
+            edges[v] = s1516_mul((0 - drawsmalltricmd.verts[v].x) << 8, edge_dxs[v]) - s1516_mul((0 - drawsmalltricmd.verts[v].y) << 8, -edge_dys[v]);
 
             // Top-left rule: shift top-left edges ever so slightly outward to make the top-left edges be the tie-breakers when rasterizing adjacent triangles
             if ((verts[v].y == verts[v1].y && verts[v].x < verts[v1].x) || verts[v].y > verts[v1].y) edges[v]--;
@@ -887,79 +904,87 @@ static void rasterize_triangle(
 			drawsmalltricmd.edge_dys[v] = edge_dys[v];
 		}
 
-		for (int32_t v = 0; v < 3; v++)
-		{
-			drawsmalltricmd.edges[v] = edges[v] + edge_dxs[v] * (first_tile_x - last_tile_x) * TILE_WIDTH_IN_PIXELS;
-			drawsmalltricmd.first_coarse_x = ((first_tile_px_x - bbox_min_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
-			drawsmalltricmd.last_coarse_x = ((last_tile_px_x - bbox_min_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
-			if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS) {
-				drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
-			}
-			drawsmalltricmd.first_coarse_y = ((first_tile_px_y - bbox_min_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
-			drawsmalltricmd.last_coarse_y = ((last_tile_px_y - bbox_min_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
-			if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS) {
-				drawsmalltricmd.last_coarse_y = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
-			}
-		}
-		uint32_t first_tile_id = first_tile_y * fb->width_in_tiles + first_tile_x;
-        framebuffer_push_tilecmd(fb, first_tile_id, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
+        // draw top left tile
+        uint32_t first_tile_id = first_tile_y * fb->width_in_tiles + first_tile_x;
+        {
+            for (int32_t v = 0; v < 3; v++)
+            {
+                drawsmalltricmd.edges[v] = edges[v] + (
+                    edge_dxs[v] * (first_tile_x - last_tile_x) +
+                    edge_dys[v] * (first_tile_y - last_tile_y)) * TILE_WIDTH_IN_PIXELS;
+            }
 
+            drawsmalltricmd.first_coarse_x = first_rel_cb_x;
+            drawsmalltricmd.last_coarse_x = last_rel_cb_x;
+            if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS)
+            {
+                drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
+            }
+            drawsmalltricmd.first_coarse_y = first_rel_cb_y;
+            drawsmalltricmd.last_coarse_y = last_rel_cb_y;
+            if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS)
+            {
+                drawsmalltricmd.last_coarse_y = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
+            }
+
+            framebuffer_push_tilecmd(fb, first_tile_id, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
+        }
+
+        // draw top right tile
         if (last_tile_x > first_tile_x)
         {
 			for (int32_t v = 0; v < 3; v++)
 			{
-				drawsmalltricmd.edges[v] = edges[v] + edge_dxs[v] * TILE_WIDTH_IN_PIXELS;
-				drawsmalltricmd.first_coarse_x = ((first_tile_px_x - bbox_min_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS - TILE_WIDTH_IN_COARSE_BLOCKS;
-				drawsmalltricmd.last_coarse_x = ((last_tile_px_x - bbox_min_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
-				if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS) {
-					drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
-				}
-				drawsmalltricmd.first_coarse_y = ((first_tile_px_y - bbox_min_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
-				drawsmalltricmd.last_coarse_y = ((last_tile_px_y - bbox_min_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
-				if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS) {
-					drawsmalltricmd.last_coarse_y = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
-				}
+                drawsmalltricmd.edges[v] = edges[v] + edge_dys[v] * (first_tile_y - last_tile_y) * TILE_WIDTH_IN_PIXELS;
 			}
+
+            drawsmalltricmd.first_coarse_x = 0;
+            drawsmalltricmd.last_coarse_x = last_rel_cb_x - TILE_WIDTH_IN_COARSE_BLOCKS;
+            drawsmalltricmd.first_coarse_y = first_rel_cb_y;
+            drawsmalltricmd.last_coarse_y = last_rel_cb_y;
+            if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS)
+            {
+                drawsmalltricmd.last_coarse_y = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
+            }
+
 			uint32_t tile_id_right = first_tile_id + 1;
             framebuffer_push_tilecmd(fb, tile_id_right, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
         }
 
+        // draw bottom left tile
         if (last_tile_y > first_tile_y)
         {
 			for (int32_t v = 0; v < 3; v++)
 			{
-				drawsmalltricmd.edges[v] = edges[v] + edge_dys[v] * TILE_WIDTH_IN_PIXELS;
-				drawsmalltricmd.first_coarse_x = ((first_tile_px_x - bbox_min_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
-				drawsmalltricmd.last_coarse_x = ((last_tile_px_x - bbox_min_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
-				if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS) {
-					drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
-				}
-				drawsmalltricmd.first_coarse_y = ((first_tile_px_y - bbox_min_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS - TILE_WIDTH_IN_COARSE_BLOCKS;
-				drawsmalltricmd.last_coarse_y = ((last_tile_px_y - bbox_min_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
-				if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS) {
-					drawsmalltricmd.last_coarse_y = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
-				}
+                drawsmalltricmd.edges[v] = edges[v] + edge_dxs[v] * (first_tile_x - last_tile_x) * TILE_WIDTH_IN_PIXELS;
 			}
+
+            drawsmalltricmd.first_coarse_x = first_rel_cb_x;
+            drawsmalltricmd.last_coarse_x = last_rel_cb_x;
+            if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS)
+            {
+                drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
+            }
+            drawsmalltricmd.first_coarse_y = 0;
+            drawsmalltricmd.last_coarse_y = last_rel_cb_y - TILE_WIDTH_IN_COARSE_BLOCKS;
+
 			uint32_t tile_id_down = first_tile_id + fb->width_in_tiles;
             framebuffer_push_tilecmd(fb, tile_id_down, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
         }
 
+        // draw bottom right tile
         if (last_tile_x > first_tile_x && last_tile_y > first_tile_y)
         {
 			for (int32_t v = 0; v < 3; v++)
 			{
-				drawsmalltricmd.edges[v] = edges[v] + (edge_dxs[v] + edge_dys[v]) * TILE_WIDTH_IN_PIXELS;
-				drawsmalltricmd.first_coarse_x = ((first_tile_px_x - bbox_min_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS - TILE_WIDTH_IN_COARSE_BLOCKS;
-				drawsmalltricmd.last_coarse_x = ((last_tile_px_x - bbox_min_x) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
-				if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS) {
-					drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
-				}
-				drawsmalltricmd.first_coarse_y = ((first_tile_px_y - bbox_min_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS - TILE_WIDTH_IN_COARSE_BLOCKS;
-				drawsmalltricmd.last_coarse_y = ((last_tile_px_y - bbox_min_y) >> 8) / COARSE_BLOCK_WIDTH_IN_PIXELS;
-				if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS) {
-					drawsmalltricmd.last_coarse_y = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
-				}
+                drawsmalltricmd.edges[v] = edges[v];
 			}
+
+            drawsmalltricmd.first_coarse_x = 0;
+            drawsmalltricmd.last_coarse_y = last_rel_cb_x - TILE_WIDTH_IN_COARSE_BLOCKS;
+            drawsmalltricmd.first_coarse_y = 0;
+            drawsmalltricmd.last_coarse_y = last_rel_cb_y - TILE_WIDTH_IN_COARSE_BLOCKS;
+
 			uint32_t tile_id_downright = first_tile_id + 1 + fb->width_in_tiles;
             framebuffer_push_tilecmd(fb, tile_id_downright, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
         }
