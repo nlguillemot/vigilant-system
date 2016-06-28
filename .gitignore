@@ -2,7 +2,7 @@
 *.slo
 *.lo
 *.o
-*.obj
+# *.obj (not ignored because of those darn .obj models)
 
 # Precompiled Headers
 *.gch
