@@ -656,6 +656,8 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, uint32_t tile_id)
 
 static void framebuffer_push_tilecmd(framebuffer_t* fb, uint32_t tile_id, const uint32_t* cmd_dwords, uint32_t num_dwords)
 {
+    assert(tile_id < fb->total_num_tiles);
+
     tile_cmdbuf_t* cmdbuf = &fb->tile_cmdbufs[tile_id];
     
     if (cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write > 0 && cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write < num_dwords)
@@ -855,8 +857,8 @@ static void rasterize_triangle(
     // clip bbox to scissor rect
     if (bbox_min_x < 0) bbox_min_x = 0;
     if (bbox_min_y < 0) bbox_min_y = 0;
-    if (bbox_max_x >= (int32_t)(fb->width_in_pixels << 8)) bbox_max_x = (int32_t)fb->width_in_pixels << 8;
-    if (bbox_max_y >= (int32_t)(fb->height_in_pixels << 8)) bbox_max_y = (int32_t)fb->height_in_pixels << 8;
+    if (bbox_max_x >= (int32_t)(fb->width_in_pixels << 8)) bbox_max_x = ((int32_t)fb->width_in_pixels << 8) - 1;
+    if (bbox_max_y >= (int32_t)(fb->height_in_pixels << 8)) bbox_max_y = ((int32_t)fb->height_in_pixels << 8) - 1;
 
     // "small" triangles are no wider than a tile.
     int32_t is_large =
