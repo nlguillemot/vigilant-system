@@ -3,7 +3,15 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 14
 VisualStudioVersion = 14.0.25123.0
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "vigilant-system", "vigilant-system.vcxproj", "{2D088876-28F5-4BCA-B109-C6F6B1985B02}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "rasterizer", "rasterizer\rasterizer.vcxproj", "{D4F1E22E-CFBC-4920-9E8E-A9110C526C9E}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "benchmark", "benchmark\benchmark.vcxproj", "{B33EE60E-7F4A-4941-8DA6-20BC18F75B55}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "renderer", "renderer\renderer.vcxproj", "{2BB11C47-8690-486D-8098-E0DBA2BCBE20}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "viewer", "viewer\viewer.vcxproj", "{EC953FAF-3FCD-4373-AC2B-00BCDCD72B71}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "imgui", "imgui\imgui.vcxproj", "{E840C562-271F-480F-8632-776AA73756DE}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -12,12 +20,36 @@ Global
 		ReleaseAVX2|x64 = ReleaseAVX2|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{2D088876-28F5-4BCA-B109-C6F6B1985B02}.Debug|x64.ActiveCfg = Debug|x64
-		{2D088876-28F5-4BCA-B109-C6F6B1985B02}.Debug|x64.Build.0 = Debug|x64
-		{2D088876-28F5-4BCA-B109-C6F6B1985B02}.Release|x64.ActiveCfg = Release|x64
-		{2D088876-28F5-4BCA-B109-C6F6B1985B02}.Release|x64.Build.0 = Release|x64
-		{2D088876-28F5-4BCA-B109-C6F6B1985B02}.ReleaseAVX2|x64.ActiveCfg = ReleaseAVX2|x64
-		{2D088876-28F5-4BCA-B109-C6F6B1985B02}.ReleaseAVX2|x64.Build.0 = ReleaseAVX2|x64
+		{D4F1E22E-CFBC-4920-9E8E-A9110C526C9E}.Debug|x64.ActiveCfg = Debug|x64
+		{D4F1E22E-CFBC-4920-9E8E-A9110C526C9E}.Debug|x64.Build.0 = Debug|x64
+		{D4F1E22E-CFBC-4920-9E8E-A9110C526C9E}.Release|x64.ActiveCfg = Release|x64
+		{D4F1E22E-CFBC-4920-9E8E-A9110C526C9E}.Release|x64.Build.0 = Release|x64
+		{D4F1E22E-CFBC-4920-9E8E-A9110C526C9E}.ReleaseAVX2|x64.ActiveCfg = Release|x64
+		{D4F1E22E-CFBC-4920-9E8E-A9110C526C9E}.ReleaseAVX2|x64.Build.0 = Release|x64
+		{B33EE60E-7F4A-4941-8DA6-20BC18F75B55}.Debug|x64.ActiveCfg = Debug|x64
+		{B33EE60E-7F4A-4941-8DA6-20BC18F75B55}.Debug|x64.Build.0 = Debug|x64
+		{B33EE60E-7F4A-4941-8DA6-20BC18F75B55}.Release|x64.ActiveCfg = Release|x64
+		{B33EE60E-7F4A-4941-8DA6-20BC18F75B55}.Release|x64.Build.0 = Release|x64
+		{B33EE60E-7F4A-4941-8DA6-20BC18F75B55}.ReleaseAVX2|x64.ActiveCfg = Release|x64
+		{B33EE60E-7F4A-4941-8DA6-20BC18F75B55}.ReleaseAVX2|x64.Build.0 = Release|x64
+		{2BB11C47-8690-486D-8098-E0DBA2BCBE20}.Debug|x64.ActiveCfg = Debug|x64
+		{2BB11C47-8690-486D-8098-E0DBA2BCBE20}.Debug|x64.Build.0 = Debug|x64
+		{2BB11C47-8690-486D-8098-E0DBA2BCBE20}.Release|x64.ActiveCfg = Release|x64
+		{2BB11C47-8690-486D-8098-E0DBA2BCBE20}.Release|x64.Build.0 = Release|x64
+		{2BB11C47-8690-486D-8098-E0DBA2BCBE20}.ReleaseAVX2|x64.ActiveCfg = Release|x64
+		{2BB11C47-8690-486D-8098-E0DBA2BCBE20}.ReleaseAVX2|x64.Build.0 = Release|x64
+		{EC953FAF-3FCD-4373-AC2B-00BCDCD72B71}.Debug|x64.ActiveCfg = Debug|x64
+		{EC953FAF-3FCD-4373-AC2B-00BCDCD72B71}.Debug|x64.Build.0 = Debug|x64
+		{EC953FAF-3FCD-4373-AC2B-00BCDCD72B71}.Release|x64.ActiveCfg = Release|x64
+		{EC953FAF-3FCD-4373-AC2B-00BCDCD72B71}.Release|x64.Build.0 = Release|x64
+		{EC953FAF-3FCD-4373-AC2B-00BCDCD72B71}.ReleaseAVX2|x64.ActiveCfg = Release|x64
+		{EC953FAF-3FCD-4373-AC2B-00BCDCD72B71}.ReleaseAVX2|x64.Build.0 = Release|x64
+		{E840C562-271F-480F-8632-776AA73756DE}.Debug|x64.ActiveCfg = Debug|x64
+		{E840C562-271F-480F-8632-776AA73756DE}.Debug|x64.Build.0 = Debug|x64
+		{E840C562-271F-480F-8632-776AA73756DE}.Release|x64.ActiveCfg = Release|x64
+		{E840C562-271F-480F-8632-776AA73756DE}.Release|x64.Build.0 = Release|x64
+		{E840C562-271F-480F-8632-776AA73756DE}.ReleaseAVX2|x64.ActiveCfg = Release|x64
+		{E840C562-271F-480F-8632-776AA73756DE}.ReleaseAVX2|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
