@@ -179,7 +179,10 @@ int main()
         }
         scene_set_view(sc, view_s1516);
 
+        LARGE_INTEGER before_raster, after_raster;
+        QueryPerformanceCounter(&before_raster);
         renderer_render_scene(rd, sc);
+        QueryPerformanceCounter(&after_raster);
 
         // render rasterization to screen
         {
@@ -223,6 +226,14 @@ int main()
             glEnd();
             glBlendFunc(GL_ONE, GL_ZERO);
             glDisable(GL_BLEND);
+        }
+
+        if (ImGui::Begin("Info"))
+        {
+            LONGLONG raster_time = after_raster.QuadPart - before_raster.QuadPart;
+            LONGLONG raster_time_us = raster_time * 1000000 / freq.QuadPart;
+            ImGui::Text("Raster time: %llu microseconds", raster_time_us);
+            ImGui::End();
         }
 
         ImGui::Render();
