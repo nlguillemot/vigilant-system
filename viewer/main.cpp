@@ -127,6 +127,8 @@ int main()
     GetCursorPos(&oldcursor);
 
     bool show_tiles = true;
+    bool show_coarse_blocks = true;
+    bool show_fine_blocks = true;
 
     uint8_t* rgba8_pixels = (uint8_t*)malloc(fbwidth * fbheight * 4);
     assert(rgba8_pixels);
@@ -148,6 +150,8 @@ int main()
         if (ImGui::Begin("Toolbox"))
         {
             ImGui::Checkbox("Show tiles", &show_tiles);
+            ImGui::Checkbox("Show coarse blocks", &show_coarse_blocks);
+            ImGui::Checkbox("Show fine blocks", &show_fine_blocks);
             ImGui::End();
         }
 
@@ -184,6 +188,8 @@ int main()
         renderer_render_scene(rd, sc);
         QueryPerformanceCounter(&after_raster);
 
+        glClear(GL_COLOR_BUFFER_BIT);
+
         // render rasterization to screen
         {
             framebuffer_t* fb = renderer_get_framebuffer(rd);
@@ -202,7 +208,7 @@ int main()
         }
 
         // draw lines showing tiles
-        if (show_tiles)
+        if (show_tiles || show_coarse_blocks || show_fine_blocks)
         {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -212,16 +218,47 @@ int main()
             glMatrixMode(GL_MODELVIEW);
             glLoadIdentity();
             glBegin(GL_LINES);
-            glColor4f(1.0f, 1.0f, 1.0f, 0.5f);
-            for (int i = 0; i < fbwidth / 128; i++)
+            if (show_tiles)
             {
-                glVertex2f(i * 128.0f, 0.0f);
-                glVertex2f(i * 128.0f, (float)fbheight);
+                glColor4f(1.0f, 1.0f, 1.0f, 0.5f);
+                for (int i = 0; i < fbwidth / 128; i++)
+                {
+                    glVertex2f(i * 128.0f, 0.0f);
+                    glVertex2f(i * 128.0f, (float)fbheight);
+                }
+                for (int i = 0; i < fbheight / 128; i++)
+                {
+                    glVertex2f(0.0f, i * 128.0f);
+                    glVertex2f((float)fbwidth, i * 128.0f);
+                }
             }
-            for (int i = 0; i < fbheight / 128; i++)
+            if (show_coarse_blocks)
             {
-                glVertex2f(0.0f, i * 128.0f);
-                glVertex2f((float)fbwidth, i * 128.0f);
+                glColor4f(1.0f, 0.7f, 0.7f, 0.5f);
+                for (int i = 0; i < fbwidth / 16; i++)
+                {
+                    glVertex2f(i * 16.0f, 0.0f);
+                    glVertex2f(i * 16.0f, (float)fbheight);
+                }
+                for (int i = 0; i < fbheight / 16; i++)
+                {
+                    glVertex2f(0.0f, i * 16.0f);
+                    glVertex2f((float)fbwidth, i * 16.0f);
+                }
+            }
+            if (show_fine_blocks)
+            {
+                glColor4f(0.7f, 1.0f, 0.7f, 0.5f);
+                for (int i = 0; i < fbwidth / 4; i++)
+                {
+                    glVertex2f(i * 4.0f, 0.0f);
+                    glVertex2f(i * 4.0f, (float)fbheight);
+                }
+                for (int i = 0; i < fbheight / 4; i++)
+                {
+                    glVertex2f(0.0f, i * 4.0f);
+                    glVertex2f((float)fbwidth, i * 4.0f);
+                }
             }
             glEnd();
             glBlendFunc(GL_ONE, GL_ZERO);
