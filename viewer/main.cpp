@@ -10,11 +10,13 @@
 #include <Windows.h>
 #include <DirectXMath.h>
 #include <GL/gl.h>
+#include <GL/glu.h>
 
 #include <imgui.h>
 #include <imgui_impl_win32_gl.h>
 
 #pragma comment(lib, "OpenGL32.lib")
+#pragma comment(lib, "glu32.lib")
 
 LRESULT CALLBACK MyWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -124,6 +126,8 @@ int main()
     POINT oldcursor;
     GetCursorPos(&oldcursor);
 
+    bool show_tiles = true;
+
     uint8_t* rgba8_pixels = (uint8_t*)malloc(fbwidth * fbheight * 4);
     assert(rgba8_pixels);
 
@@ -140,8 +144,12 @@ int main()
         }
 
         ImGui_ImplWin32GL_NewFrame();
-
-        ImGui::ShowTestWindow();
+        
+        if (ImGui::Begin("Toolbox"))
+        {
+            ImGui::Checkbox("Show tiles", &show_tiles);
+            ImGui::End();
+        }
 
         QueryPerformanceCounter(&now);
         float delta_time_sec = (float)(now.QuadPart - then.QuadPart) / freq.QuadPart;
@@ -173,19 +181,49 @@ int main()
 
         renderer_render_scene(rd, sc);
 
-        framebuffer_t* fb = renderer_get_framebuffer(rd);
-        framebuffer_pack_row_major(fb, 0, 0, fbwidth, fbheight, pixelformat_r8g8b8a8_unorm, rgba8_pixels);
-        // flip the rows to appease the OpenGL gods
-        for (int32_t row = 0; row < fbheight / 2; row++)
+        // render rasterization to screen
         {
-            for (int32_t col = 0; col < fbwidth; col++)
+            framebuffer_t* fb = renderer_get_framebuffer(rd);
+            framebuffer_pack_row_major(fb, 0, 0, fbwidth, fbheight, pixelformat_r8g8b8a8_unorm, rgba8_pixels);
+            // flip the rows to appease the OpenGL gods
+            for (int32_t row = 0; row < fbheight / 2; row++)
             {
-                uint32_t tmp = *(uint32_t*)&rgba8_pixels[(row * fbwidth + col) * 4];
-                *(uint32_t*)&rgba8_pixels[(row * fbwidth + col) * 4] = *(uint32_t*)&rgba8_pixels[((fbheight - row - 1) * fbwidth + col) * 4];
-                *(uint32_t*)&rgba8_pixels[((fbheight - row - 1) * fbwidth + col) * 4] = tmp;
+                for (int32_t col = 0; col < fbwidth; col++)
+                {
+                    uint32_t tmp = *(uint32_t*)&rgba8_pixels[(row * fbwidth + col) * 4];
+                    *(uint32_t*)&rgba8_pixels[(row * fbwidth + col) * 4] = *(uint32_t*)&rgba8_pixels[((fbheight - row - 1) * fbwidth + col) * 4];
+                    *(uint32_t*)&rgba8_pixels[((fbheight - row - 1) * fbwidth + col) * 4] = tmp;
+                }
             }
+            glDrawPixels(fbwidth, fbheight, GL_RGBA, GL_UNSIGNED_BYTE, rgba8_pixels);
         }
-        glDrawPixels(fbwidth, fbheight, GL_RGBA, GL_UNSIGNED_BYTE, rgba8_pixels);
+
+        // draw lines showing tiles
+        if (show_tiles)
+        {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glMatrixMode(GL_PROJECTION);
+            glLoadIdentity();
+            gluOrtho2D(0.0, (GLdouble)fbwidth, (GLdouble)fbheight, 0.0);
+            glMatrixMode(GL_MODELVIEW);
+            glLoadIdentity();
+            glBegin(GL_LINES);
+            glColor4f(1.0f, 1.0f, 1.0f, 0.5f);
+            for (int i = 0; i < fbwidth / 128; i++)
+            {
+                glVertex2f(i * 128.0f, 0.0f);
+                glVertex2f(i * 128.0f, (float)fbheight);
+            }
+            for (int i = 0; i < fbheight / 128; i++)
+            {
+                glVertex2f(0.0f, i * 128.0f);
+                glVertex2f((float)fbwidth, i * 128.0f);
+            }
+            glEnd();
+            glBlendFunc(GL_ONE, GL_ZERO);
+            glDisable(GL_BLEND);
+        }
 
         ImGui::Render();
 

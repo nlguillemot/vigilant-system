@@ -36,3 +36,5 @@ x64
 
 # the test output image
 output.png
+
+imgui.ini
