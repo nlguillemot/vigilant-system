@@ -28,6 +28,7 @@ RASTERIZER_API framebuffer_t* new_framebuffer(uint32_t width, uint32_t height);
 RASTERIZER_API void delete_framebuffer(framebuffer_t* fb);
 RASTERIZER_API void framebuffer_resolve(framebuffer_t* fb);
 RASTERIZER_API void framebuffer_pack_row_major(framebuffer_t* fb, uint32_t x, uint32_t y, uint32_t width, uint32_t height, pixelformat_t format, void* data);
+RASTERIZER_API void framebuffer_clear(framebuffer_t* fb, uint32_t color);
 
 RASTERIZER_API void rasterizer_draw(
     framebuffer_t* fb,

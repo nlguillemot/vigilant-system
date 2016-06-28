@@ -59,6 +59,22 @@ static int32_t s1516_div(int32_t a, int32_t b)
     return result;
 }
 
+static int32_t s1516_fma(int32_t a, int32_t b, int32_t c)
+{
+    int32_t result;
+    int64_t temp;
+
+    temp = (int64_t)a * (int64_t)b + ((int64_t)c << 16);
+
+    // Rounding: mid values are rounded up
+    temp += 1 << 15;
+
+    // Correct by dividing by base and saturate result
+    result = s1516_sat(temp >> 16);
+
+    return result;
+}
+
 static int32_t s1516_int(int32_t i)
 {
     return i << 16;

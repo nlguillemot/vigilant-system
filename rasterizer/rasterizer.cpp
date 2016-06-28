@@ -162,6 +162,7 @@ typedef enum tilecmd_id_t
     tilecmd_id_drawtile_1edge,
     tilecmd_id_drawtile_2edge,
     tilecmd_id_drawtile_3edge,
+    tilecmd_id_cleartile
 } tilecmd_id_t;
 
 typedef struct xyzw_i32_t
@@ -188,6 +189,12 @@ typedef struct tilecmd_drawtile_t
     int32_t edge_dxs[3];
     int32_t edge_dys[3];
 } tilecmd_drawtile_t;
+
+typedef struct tilecmd_cleartile_t
+{
+    uint32_t tilecmd_id;
+    uint32_t color;
+} tilecmd_cleartile_t;
 
 typedef struct framebuffer_t
 {
@@ -289,7 +296,7 @@ void delete_framebuffer(framebuffer_t* fb)
 }
 
 // hack
-static uint32_t g_Color;
+static uint32_t g_Color = 0xFFFF00FF;
 
 static void draw_coarse_block_smalltri(framebuffer_t* fb, uint32_t tile_id, int32_t coarse_topleft_x, int32_t coarse_topleft_y, const tilecmd_drawsmalltri_t* drawcmd)
 {
@@ -595,6 +602,17 @@ static void draw_tile_largetri(framebuffer_t* fb, uint32_t tile_id, const tilecm
     }
 }
 
+static void clear_tile(framebuffer_t* fb, uint32_t tile_id, tilecmd_cleartile_t* cmd)
+{
+    uint32_t tile_start_i = PIXELS_PER_TILE * tile_id;
+    uint32_t tile_end_i = tile_start_i + PIXELS_PER_TILE;
+    uint32_t color = cmd->color;
+    for (uint32_t px = tile_start_i; px < tile_end_i; px++)
+    {
+        fb->backbuffer[px] = color;
+    }
+}
+
 static void framebuffer_resolve_tile(framebuffer_t* fb, uint32_t tile_id)
 {
     tile_cmdbuf_t* cmdbuf = &fb->tile_cmdbufs[tile_id];
@@ -616,6 +634,11 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, uint32_t tile_id)
         {           
             draw_tile_largetri(fb, tile_id, (tilecmd_drawtile_t*)cmd);
             cmd += sizeof(tilecmd_drawtile_t) / sizeof(uint32_t);
+        }
+        else if (tilecmd_id == tilecmd_id_cleartile)
+        {
+            clear_tile(fb, tile_id, (tilecmd_cleartile_t*)cmd);
+            cmd += sizeof(tilecmd_cleartile_t) / sizeof(uint32_t);
         }
         else
         {
@@ -768,6 +791,18 @@ void framebuffer_pack_row_major(framebuffer_t* fb, uint32_t x, uint32_t y, uint3
     }
 }
 
+void framebuffer_clear(framebuffer_t* fb, uint32_t color)
+{
+    tilecmd_cleartile_t tilecmd;
+    tilecmd.tilecmd_id = tilecmd_id_cleartile;
+    tilecmd.color = color;
+
+    for (uint32_t tile_id = 0; tile_id < fb->total_num_tiles; tile_id++)
+    {
+        framebuffer_push_tilecmd(fb, tile_id, &tilecmd.tilecmd_id, sizeof(tilecmd) / sizeof(uint32_t));
+    }
+}
+
 static void rasterize_triangle(
     framebuffer_t* fb,
     xyzw_i32_t clipVerts[3])
@@ -865,7 +900,7 @@ static void rasterize_triangle(
 		}
 
         int32_t triarea2 = (verts[1].x - verts[0].x) * (verts[2].y - verts[0].y) - (verts[1].y - verts[0].y) * (verts[2].x - verts[0].x);
-        if (triarea2 == 0)
+        if (triarea2 <= 0)
         {
             goto skiptri;
         }
@@ -1012,7 +1047,7 @@ static void rasterize_triangle(
         // The tens of thousands of pixels that large triangles generate outweigh the cost of slightly more expensive setup.
 
         int64_t triarea2 = ((int64_t)verts[1].x - verts[0].x) * ((int64_t)verts[2].y - verts[0].y) - ((int64_t)verts[1].y - verts[0].y) * ((int64_t)verts[2].x - verts[0].x);
-        if (triarea2 == 0)
+        if (triarea2 <= 0)
         {
             goto skiptri;
         }

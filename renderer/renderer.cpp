@@ -3,6 +3,7 @@
 #include <stdlib.h>
 
 #include <rasterizer.h>
+#include <s1516.h>
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
@@ -31,6 +32,9 @@ typedef struct scene_t
 
     instance_t* instances;
     uint32_t instance_count;
+
+    int32_t view[16];
+    int32_t proj[16];
 } scene_t;
 
 typedef struct renderer_t
@@ -58,17 +62,54 @@ void delete_renderer(renderer_t* rd)
     free(rd);
 }
 
+static void s15164x4_mul(const int32_t* a, const int32_t* b, int32_t* dst)
+{
+    dst[0]  = s1516_fma(a[0],  b[0], s1516_fma(a[4],  b[1], s1516_fma( a[8],  b[2], s1516_mul(a[12],  b[3]))));
+    dst[1]  = s1516_fma(a[1],  b[0], s1516_fma(a[5],  b[1], s1516_fma( a[9],  b[2], s1516_mul(a[13],  b[3]))));
+    dst[2]  = s1516_fma(a[2],  b[0], s1516_fma(a[6],  b[1], s1516_fma(a[10],  b[2], s1516_mul(a[14],  b[3]))));
+    dst[3]  = s1516_fma(a[3],  b[0], s1516_fma(a[7],  b[1], s1516_fma(a[11],  b[2], s1516_mul(a[15],  b[3]))));
+    dst[4]  = s1516_fma(a[0],  b[4], s1516_fma(a[4],  b[5], s1516_fma( a[8],  b[6], s1516_mul(a[12],  b[7]))));
+    dst[5]  = s1516_fma(a[1],  b[4], s1516_fma(a[5],  b[5], s1516_fma( a[9],  b[6], s1516_mul(a[13],  b[7]))));
+    dst[6]  = s1516_fma(a[2],  b[4], s1516_fma(a[6],  b[5], s1516_fma(a[10],  b[6], s1516_mul(a[14],  b[7]))));
+    dst[7]  = s1516_fma(a[3],  b[4], s1516_fma(a[7],  b[5], s1516_fma(a[11],  b[6], s1516_mul(a[15],  b[7]))));
+    dst[8]  = s1516_fma(a[0],  b[8], s1516_fma(a[4],  b[9], s1516_fma( a[8], b[10], s1516_mul(a[12], b[11]))));
+    dst[9]  = s1516_fma(a[1],  b[8], s1516_fma(a[5],  b[9], s1516_fma( a[9], b[10], s1516_mul(a[13], b[11]))));
+    dst[10] = s1516_fma(a[2],  b[8], s1516_fma(a[6],  b[9], s1516_fma(a[10], b[10], s1516_mul(a[14], b[11]))));
+    dst[11] = s1516_fma(a[3],  b[8], s1516_fma(a[7],  b[9], s1516_fma(a[11], b[10], s1516_mul(a[15], b[11]))));
+    dst[12] = s1516_fma(a[0], b[12], s1516_fma(a[4], b[13], s1516_fma( a[8], b[14], s1516_mul(a[12], b[15]))));
+    dst[13] = s1516_fma(a[1], b[12], s1516_fma(a[5], b[13], s1516_fma( a[9], b[14], s1516_mul(a[13], b[15]))));
+    dst[14] = s1516_fma(a[2], b[12], s1516_fma(a[6], b[13], s1516_fma(a[10], b[14], s1516_mul(a[14], b[15]))));
+    dst[15] = s1516_fma(a[3], b[12], s1516_fma(a[7], b[13], s1516_fma(a[11], b[14], s1516_mul(a[15], b[15]))));
+}
+
 static void renderer_render_instance(renderer_t* rd, scene_t* sc, instance_t* instance)
 {
     int32_t model_id = instance->model_id;
     model_t* model = &sc->models[model_id];
 
+    int32_t viewproj[16];
+    s15164x4_mul(sc->proj, sc->view, viewproj);
+
     for (uint32_t index_id = 0; index_id < model->index_count; index_id += 3)
     {
         int32_t xverts[3][4];
 
-        // TODO: transform 3 vertices and place them in xverts
-        // TODO: cache transformations based on vertex id
+        // TODO: cache transformations based on vertex_id
+
+        for (uint32_t index_off = 0; index_off < 3; index_off++)
+        {
+            uint32_t vertex_id = model->indices[index_id + index_off];
+            int32_t vert[3];
+            vert[0] = model->positions[vertex_id * 3 + 0];
+            vert[1] = model->positions[vertex_id * 3 + 1];
+            vert[2] = model->positions[vertex_id * 3 + 2];
+
+            // TODO: incorporate modelworld matrix
+            xverts[index_off][0] = s1516_fma(viewproj[0], vert[0], s1516_fma(viewproj[4], vert[1], s1516_fma(viewproj[8], vert[2],  viewproj[12])));
+            xverts[index_off][1] = s1516_fma(viewproj[1], vert[0], s1516_fma(viewproj[5], vert[1], s1516_fma(viewproj[9], vert[2],  viewproj[13])));
+            xverts[index_off][2] = s1516_fma(viewproj[2], vert[0], s1516_fma(viewproj[6], vert[1], s1516_fma(viewproj[10], vert[2], viewproj[14])));
+            xverts[index_off][3] = s1516_fma(viewproj[3], vert[0], s1516_fma(viewproj[7], vert[1], s1516_fma(viewproj[11], vert[2], viewproj[15])));
+        }
 
         rasterizer_draw(rd->fb, &xverts[0][0], 3);
     }
@@ -79,7 +120,7 @@ void renderer_render_scene(renderer_t* rd, scene_t* sc)
     assert(rd);
     assert(sc);
 
-    // TODO: clear framebuffer
+    framebuffer_clear(rd->fb, 0x00000000);
 
     for (uint32_t instance_id = 0; instance_id < sc->instance_count; instance_id++)
     {
@@ -168,13 +209,16 @@ int32_t scene_add_models(scene_t* sc, const char* filename, const char* mtl_base
 
         for (size_t i = 0; i < tobj_m.positions.size(); i++)
         {
-            int32_t as_s1516 = (int32_t)(tobj_m.positions[i] * 65536);
+            int32_t as_s1516 = s1516_flt(tobj_m.positions[i]);
             mdl->positions[i] = as_s1516;
         }
 
-        for (size_t i = 0; i < tobj_m.indices.size(); i++)
+        for (size_t i = 0; i < tobj_m.indices.size(); i += 3)
         {
-            mdl->indices[i] = tobj_m.indices[i];
+            // flip winding (CCW to CW)
+            mdl->indices[i + 0] = tobj_m.indices[i + 0];
+            mdl->indices[i + 1] = tobj_m.indices[i + 2];
+            mdl->indices[i + 2] = tobj_m.indices[i + 1];
         }
     }
 
@@ -203,15 +247,12 @@ void scene_add_instance(scene_t* sc, uint32_t model_id, uint32_t* instance_id)
         *instance_id = tmp_instance_id;
 }
 
-void scene_set_camera_lookat(
-    int32_t eyeX, int32_t eyeY, int32_t eyeZ, 
-    int32_t targetX, int32_t targetY, int32_t targetZ, 
-    int32_t upX, int32_t upY, int32_t upZ)
+void scene_set_view(scene_t* sc, int32_t view[16])
 {
-    // TODO
+    memcpy(sc->view, view, sizeof(int32_t) * 16);
 }
 
-void scene_set_camera_perspective(int32_t fovy, int32_t aspect, int32_t zNear, int32_t zFar)
+void scene_set_projection(scene_t* sc, int32_t proj[16])
 {
-    // TODO
+    memcpy(sc->proj, proj, sizeof(int32_t) * 16);
 }

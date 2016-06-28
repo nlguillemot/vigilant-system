@@ -2,10 +2,13 @@
 #include <rasterizer.h>
 #include <s1516.h>
 
+#include <stdio.h>
+
 #define FLYTHROUGH_CAMERA_IMPLEMENTATION
 #include <flythrough_camera.h>
 
 #include <Windows.h>
+#include <DirectXMath.h>
 #include <GL/gl.h>
 
 #pragma comment(lib, "OpenGL32.lib")
@@ -70,6 +73,7 @@ int main()
     int fbwidth = 1024;
     int fbheight = 768;
 
+    SetProcessDPIAware();
     init_window(fbwidth, fbheight);
 
     renderer_t* rd = new_renderer(fbwidth, fbheight);
@@ -83,11 +87,22 @@ int main()
         scene_add_instance(sc, model_id, &instance_id);
     }
 
-    scene_set_camera_lookat(s1516_int(5), s1516_int(5), s1516_int(5), 0, 0, 0, 0, s1516_int(1), 0);
-    scene_set_camera_perspective(s1516_flt(70.0f * 3.14f / 180.0f), s1516_flt((float)fbwidth / fbheight), s1516_flt(0.01f), s1516_flt(10.0f));
+    // compute projection matrix with DirectXMath because lazy
+    {
+        DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(70.0f), (float)fbwidth / fbheight, 0.01f, 10.0f);
+        DirectX::XMFLOAT4X4 proj4x4;
+        DirectX::XMStoreFloat4x4(&proj4x4, proj);
 
-    float pos[3] = { 0.0f, 0.0f, 0.0f };
-    float look[3] = { 0.0f, 0.0f, 1.0f };
+        int32_t fx_proj[16];
+        for (int32_t i = 0; i < 16; i++)
+        {
+            fx_proj[i] = s1516_flt(*((float*)proj4x4.m + i));
+        }
+        scene_set_projection(sc, fx_proj);
+    }
+
+    float eye[3] = { 0.0f, 0.0f, 3.0f };
+    float look[3] = { 0.0f, 0.0f, -1.0f };
     const float up[3] = { 0.0f, 1.0f, 0.0f };
 
     LARGE_INTEGER then, now, freq;
@@ -102,7 +117,6 @@ int main()
 
     // readback framebuffer contents
     framebuffer_t* fb = renderer_get_framebuffer(rd);
-
 
     while (!(GetAsyncKeyState(VK_ESCAPE) & 0x8000))
     {
@@ -124,7 +138,7 @@ int main()
 
         float view[16];
         flythrough_camera_update(
-            pos, look, up, view,
+            eye, look, up, view,
             delta_time_sec,
             10.0f * ((GetAsyncKeyState(VK_LSHIFT) & 0x8000) ? 2.0f : 1.0f) * activated,
             0.5f * activated,
@@ -132,12 +146,29 @@ int main()
             cursor.x - oldcursor.x, cursor.y - oldcursor.y,
             GetAsyncKeyState('W') & 0x8000, GetAsyncKeyState('A') & 0x8000, GetAsyncKeyState('S') & 0x8000, GetAsyncKeyState('D') & 0x8000,
             GetAsyncKeyState(VK_SPACE) & 0x8000, GetAsyncKeyState(VK_LCONTROL) & 0x8000,
-            0);
+            FLYTHROUGH_CAMERA_LEFT_HANDED_BIT);
+
+        int32_t view_s1516[16];
+        for (int32_t i = 0; i < 16; i++)
+        {
+            view_s1516[i] = s1516_flt(view[i]);
+        }
+        scene_set_view(sc, view_s1516);
 
         renderer_render_scene(rd, sc);
 
         framebuffer_t* fb = renderer_get_framebuffer(rd);
         framebuffer_pack_row_major(fb, 0, 0, fbwidth, fbheight, pixelformat_r8g8b8a8_unorm, rgba8_pixels);
+        // flip the rows to appease the OpenGL gods
+        for (int32_t row = 0; row < fbheight / 2; row++)
+        {
+            for (int32_t col = 0; col < fbwidth; col++)
+            {
+                uint32_t tmp = *(uint32_t*)&rgba8_pixels[(row * fbwidth + col) * 4];
+                *(uint32_t*)&rgba8_pixels[(row * fbwidth + col) * 4] = *(uint32_t*)&rgba8_pixels[((fbheight - row - 1) * fbwidth + col) * 4];
+                *(uint32_t*)&rgba8_pixels[((fbheight - row - 1) * fbwidth + col) * 4] = tmp;
+            }
+        }
         glDrawPixels(fbwidth, fbheight, GL_RGBA, GL_UNSIGNED_BYTE, rgba8_pixels);
 
         SwapBuffers(g_hDC);
