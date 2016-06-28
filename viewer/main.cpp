@@ -56,7 +56,7 @@ void init_window(int32_t width, int32_t height)
     HWND hWnd = CreateWindowEx(
         0, TEXT("WindowClass"),
         TEXT("viewer"),
-        WS_OVERLAPPEDWINDOW,
+        WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX),
         0, 0, wr.right - wr.left, wr.bottom - wr.top,
         0, 0, GetModuleHandle(NULL), 0);
 
