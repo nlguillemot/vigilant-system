@@ -11,17 +11,27 @@
 #include <DirectXMath.h>
 #include <GL/gl.h>
 
+#include <imgui.h>
+#include <imgui_impl_win32_gl.h>
+
 #pragma comment(lib, "OpenGL32.lib")
 
 LRESULT CALLBACK MyWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    if (ImGui_ImplWin32GL_WndProcHandler(hWnd, message, wParam, lParam))
+        return true;
+
     switch (message)
     {
     case WM_CLOSE:
         ExitProcess(0);
-    default:
-        return DefWindowProc(hWnd, message, wParam, lParam);
+        return 0;
+    case WM_SYSCOMMAND:
+        if ((wParam & 0xfff0) == SC_KEYMENU) // Disable ALT application menu
+            return 0;
+        break;
     }
+    return DefWindowProc(hWnd, message, wParam, lParam);
 }
 
 HDC g_hDC;
@@ -66,6 +76,8 @@ void init_window(int32_t width, int32_t height)
     wglMakeCurrent(g_hDC, hGLRC);
 
     ShowWindow(hWnd, SW_SHOWNORMAL);
+
+    ImGui_ImplWin32GL_Init(hWnd);
 }
 
 int main()
@@ -127,6 +139,10 @@ int main()
             DispatchMessage(&msg);
         }
 
+        ImGui_ImplWin32GL_NewFrame();
+
+        ImGui::ShowTestWindow();
+
         QueryPerformanceCounter(&now);
         float delta_time_sec = (float)(now.QuadPart - then.QuadPart) / freq.QuadPart;
 
@@ -170,6 +186,8 @@ int main()
             }
         }
         glDrawPixels(fbwidth, fbheight, GL_RGBA, GL_UNSIGNED_BYTE, rgba8_pixels);
+
+        ImGui::Render();
 
         SwapBuffers(g_hDC);
 
