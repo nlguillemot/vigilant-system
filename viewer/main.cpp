@@ -53,7 +53,7 @@ void init_window(int32_t width, int32_t height)
     AdjustWindowRect(&wr, 0, FALSE);
     HWND hWnd = CreateWindowEx(
         0, TEXT("WindowClass"),
-        TEXT("BasicGL"),
+        TEXT("viewer"),
         WS_OVERLAPPEDWINDOW,
         0, 0, wr.right - wr.left, wr.bottom - wr.top,
         0, 0, GetModuleHandle(NULL), 0);
