@@ -94,7 +94,7 @@ int main()
 
     scene_t* sc = new_scene();
     uint32_t first_model_id, num_added_models;
-    scene_add_models(sc, "assets/cube/cube.obj", "assets/cube/", &first_model_id, &num_added_models);
+    scene_add_models(sc, "assets/gourd/gourd.obj", "assets/gourd/", &first_model_id, &num_added_models);
     for (uint32_t model_id = first_model_id; model_id < first_model_id + num_added_models; model_id++)
     {
         uint32_t instance_id;
