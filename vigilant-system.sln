@@ -13,6 +13,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "viewer", "viewer\viewer.vcx
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "imgui", "imgui\imgui.vcxproj", "{E840C562-271F-480F-8632-776AA73756DE}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "glloader", "glloader\glloader.vcxproj", "{C9A96524-9E8C-41CB-B3A6-0DD2A92A58D4}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -50,6 +52,12 @@ Global
 		{E840C562-271F-480F-8632-776AA73756DE}.Release|x64.Build.0 = Release|x64
 		{E840C562-271F-480F-8632-776AA73756DE}.ReleaseAVX2|x64.ActiveCfg = Release|x64
 		{E840C562-271F-480F-8632-776AA73756DE}.ReleaseAVX2|x64.Build.0 = Release|x64
+		{C9A96524-9E8C-41CB-B3A6-0DD2A92A58D4}.Debug|x64.ActiveCfg = Debug|x64
+		{C9A96524-9E8C-41CB-B3A6-0DD2A92A58D4}.Debug|x64.Build.0 = Debug|x64
+		{C9A96524-9E8C-41CB-B3A6-0DD2A92A58D4}.Release|x64.ActiveCfg = Release|x64
+		{C9A96524-9E8C-41CB-B3A6-0DD2A92A58D4}.Release|x64.Build.0 = Release|x64
+		{C9A96524-9E8C-41CB-B3A6-0DD2A92A58D4}.ReleaseAVX2|x64.ActiveCfg = Release|x64
+		{C9A96524-9E8C-41CB-B3A6-0DD2A92A58D4}.ReleaseAVX2|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

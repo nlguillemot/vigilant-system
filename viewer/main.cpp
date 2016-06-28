@@ -9,8 +9,8 @@
 
 #include <Windows.h>
 #include <DirectXMath.h>
-#include <GL/gl.h>
-#include <GL/glu.h>
+
+#include <glloader.h>
 
 #include <imgui.h>
 #include <imgui_impl_win32_gl.h>
@@ -56,7 +56,7 @@ void init_window(int32_t width, int32_t height)
     HWND hWnd = CreateWindowEx(
         0, TEXT("WindowClass"),
         TEXT("viewer"),
-        WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX),
+		WS_POPUP,
         0, 0, wr.right - wr.left, wr.bottom - wr.top,
         0, 0, GetModuleHandle(NULL), 0);
 
@@ -77,10 +77,42 @@ void init_window(int32_t width, int32_t height)
     HGLRC hGLRC = wglCreateContext(g_hDC);
     wglMakeCurrent(g_hDC, hGLRC);
 
+	LoadGLProcs();
+
     ShowWindow(hWnd, SW_SHOWNORMAL);
 
     ImGui_ImplWin32GL_Init(hWnd);
 }
+
+const char* g_GridVS = R"GLSL(#version 150
+void main()
+{
+	if (gl_VertexID == 0)
+		gl_Position = vec4(-1,-1,0,1);
+	else if (gl_VertexID == 1)
+		gl_Position = vec4(3,-1,0,1);
+	else if (gl_VertexID == 2)
+		gl_Position = vec4(-1,3,0,1);
+}
+)GLSL";
+
+const char* g_GridFS = R"GLSL(#version 430
+layout(location = 0) uniform int show_tiles;
+layout(location = 1) uniform int show_coarse;
+layout(location = 2) uniform int show_fine;
+void main() {
+	uvec2 pos = uvec2(gl_FragCoord.xy);
+	if (((pos.x & 0x7F) == 0 || (pos.y & 0x7F) == 0) && show_tiles != 0)
+		gl_FragColor = vec4(1,1,1,0.5);
+	else if (((pos.x & 0xF) == 0 || (pos.y & 0xF) == 0) && show_coarse != 0)
+ 		gl_FragColor = vec4(1,0.7,0.7,0.5);
+	else if (((pos.x & 0x3) == 0 || (pos.y & 0x3) == 0) && show_fine != 0)
+ 		gl_FragColor = vec4(0.7,1.0,0.7,0.5);
+ 	else
+ 		discard;
+}
+)GLSL";
+
 
 int main()
 {
@@ -89,6 +121,30 @@ int main()
 
     SetProcessDPIAware();
     init_window(fbwidth, fbheight);
+
+	GLuint gridsp;
+	{
+		GLint status;
+
+		GLuint gridvs = glCreateShader(GL_VERTEX_SHADER);
+		glShaderSource(gridvs, 1, &g_GridVS, NULL);
+		glCompileShader(gridvs);
+		glGetShaderiv(gridvs, GL_COMPILE_STATUS, &status);
+		assert(status);
+
+		GLuint gridfs = glCreateShader(GL_FRAGMENT_SHADER);
+		glShaderSource(gridfs, 1, &g_GridFS, NULL);
+		glCompileShader(gridfs);
+		glGetShaderiv(gridfs, GL_COMPILE_STATUS, &status);
+		assert(status);
+
+		gridsp = glCreateProgram();
+		glAttachShader(gridsp, gridvs);
+		glAttachShader(gridsp, gridfs);
+		glLinkProgram(gridsp);
+		glGetProgramiv(gridsp, GL_LINK_STATUS, &status);
+		assert(status);
+	}
 
     renderer_t* rd = new_renderer(fbwidth, fbheight);
 
@@ -207,63 +263,19 @@ int main()
             glDrawPixels(fbwidth, fbheight, GL_RGBA, GL_UNSIGNED_BYTE, rgba8_pixels);
         }
 
-        // draw lines showing tiles
-        if (show_tiles || show_coarse_blocks || show_fine_blocks)
-        {
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glMatrixMode(GL_PROJECTION);
-            glLoadIdentity();
-            gluOrtho2D(0.0, (GLdouble)fbwidth, (GLdouble)fbheight, 0.0);
-            glMatrixMode(GL_MODELVIEW);
-            glLoadIdentity();
-            glBegin(GL_LINES);
-            if (show_tiles)
-            {
-                glColor4f(1.0f, 1.0f, 1.0f, 0.5f);
-                for (int i = 0; i < fbwidth / 128; i++)
-                {
-                    glVertex2f(i * 128.0f, 0.0f);
-                    glVertex2f(i * 128.0f, (float)fbheight);
-                }
-                for (int i = 0; i < fbheight / 128; i++)
-                {
-                    glVertex2f(0.0f, i * 128.0f);
-                    glVertex2f((float)fbwidth, i * 128.0f);
-                }
-            }
-            if (show_coarse_blocks)
-            {
-                glColor4f(1.0f, 0.7f, 0.7f, 0.5f);
-                for (int i = 0; i < fbwidth / 16; i++)
-                {
-                    glVertex2f(i * 16.0f, 0.0f);
-                    glVertex2f(i * 16.0f, (float)fbheight);
-                }
-                for (int i = 0; i < fbheight / 16; i++)
-                {
-                    glVertex2f(0.0f, i * 16.0f);
-                    glVertex2f((float)fbwidth, i * 16.0f);
-                }
-            }
-            if (show_fine_blocks)
-            {
-                glColor4f(0.7f, 1.0f, 0.7f, 0.5f);
-                for (int i = 0; i < fbwidth / 4; i++)
-                {
-                    glVertex2f(i * 4.0f, 0.0f);
-                    glVertex2f(i * 4.0f, (float)fbheight);
-                }
-                for (int i = 0; i < fbheight / 4; i++)
-                {
-                    glVertex2f(0.0f, i * 4.0f);
-                    glVertex2f((float)fbwidth, i * 4.0f);
-                }
-            }
-            glEnd();
-            glBlendFunc(GL_ONE, GL_ZERO);
-            glDisable(GL_BLEND);
-        }
+		if (show_tiles || show_coarse_blocks || show_fine_blocks)
+		{
+			glEnable(GL_BLEND);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			glUseProgram(gridsp);
+			glUniform1i(0, show_tiles);
+			glUniform1i(1, show_coarse_blocks);
+			glUniform1i(2, show_fine_blocks);
+			glDrawArrays(GL_TRIANGLES, 0, 3);
+			glUseProgram(0);
+			glBlendFunc(GL_ONE, GL_ZERO);
+			glDisable(GL_BLEND);
+		}
 
         if (ImGui::Begin("Info"))
         {
