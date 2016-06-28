@@ -7,6 +7,9 @@
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
 
+#define SCENE_MAX_NUM_MODELS 256
+#define SCENE_MAX_NUM_INSTANCES 512
+
 typedef struct model_t
 {
     int32_t* positions;
@@ -21,16 +24,13 @@ typedef struct instance_t
     int32_t model_id;
 } instance_t;
 
-#define SCENE_MAX_NUM_MODELS 256
-#define SCENE_MAX_NUM_INSTANCES 512
-
 typedef struct scene_t
 {
     model_t* models;
-    int32_t model_count;
+    uint32_t model_count;
 
     instance_t* instances;
-    int32_t instance_count;
+    uint32_t instance_count;
 } scene_t;
 
 typedef struct renderer_t
@@ -58,10 +58,36 @@ void delete_renderer(renderer_t* rd)
     free(rd);
 }
 
+static void renderer_render_instance(renderer_t* rd, scene_t* sc, instance_t* instance)
+{
+    int32_t model_id = instance->model_id;
+    model_t* model = &sc->models[model_id];
+
+    for (uint32_t index_id = 0; index_id < model->index_count; index_id += 3)
+    {
+        int32_t xverts[3][4];
+
+        // TODO: transform 3 vertices and place them in xverts
+        // TODO: cache transformations based on vertex id
+
+        rasterizer_draw(rd->fb, &xverts[0][0], 3);
+    }
+}
+
 void renderer_render_scene(renderer_t* rd, scene_t* sc)
 {
     assert(rd);
     assert(sc);
+
+    // TODO: clear framebuffer
+
+    for (uint32_t instance_id = 0; instance_id < sc->instance_count; instance_id++)
+    {
+        instance_t* instance = &sc->instances[instance_id];
+        renderer_render_instance(rd, sc, instance);
+    }
+
+    framebuffer_resolve(rd->fb);
 }
 
 framebuffer_t* renderer_get_framebuffer(renderer_t* rd)
@@ -74,25 +100,30 @@ scene_t* new_scene()
     scene_t* sc = (scene_t*)malloc(sizeof(scene_t));
     assert(sc);
 
-    memset(sc, 0, sizeof(*sc));
-
     sc->models = (model_t*)malloc(sizeof(model_t) * SCENE_MAX_NUM_MODELS);
     assert(sc->models);
+
+    sc->model_count = 0;
 
     sc->instances = (instance_t*)malloc(sizeof(instance_t) * SCENE_MAX_NUM_INSTANCES);
     assert(sc->instances);
 
+    sc->instance_count = 0;
+    
     return sc;
 }
 
 void delete_scene(scene_t* sc)
 {
-    for (int32_t i = 0; i < sc->model_count; i++)
+    free(sc->instances);
+
+    for (uint32_t i = 0; i < sc->model_count; i++)
     {
         free(sc->models[i].positions);
         free(sc->models[i].indices);
     }
     free(sc->models);
+
     free(sc);
 }
 
@@ -156,8 +187,31 @@ int32_t scene_add_models(scene_t* sc, const char* filename, const char* mtl_base
     return 1;
 }
 
-void scene_add_instance(scene_t* sc, int32_t model_id, uint32_t* instance_id)
+void scene_add_instance(scene_t* sc, uint32_t model_id, uint32_t* instance_id)
 {
     assert(sc);
     assert(model_id >= 0 && model_id < sc->model_count);
+    assert(sc->instance_count < SCENE_MAX_NUM_INSTANCES);
+
+    uint32_t tmp_instance_id = sc->instance_count;
+    sc->instance_count++;
+
+    instance_t* instance = &sc->instances[tmp_instance_id];
+    instance->model_id = model_id;
+
+    if (instance_id)
+        *instance_id = tmp_instance_id;
+}
+
+void scene_set_camera_lookat(
+    int32_t eyeX, int32_t eyeY, int32_t eyeZ, 
+    int32_t targetX, int32_t targetY, int32_t targetZ, 
+    int32_t upX, int32_t upY, int32_t upZ)
+{
+    // TODO
+}
+
+void scene_set_camera_perspective(int32_t fovy, int32_t aspect, int32_t zNear, int32_t zFar)
+{
+    // TODO
 }

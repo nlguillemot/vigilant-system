@@ -1,23 +1,10 @@
-#include <stdio.h>
-#include <stdint.h>
-
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <stb_image_write.h>
-
-#include <rasterizer.h>
 #include <renderer.h>
-
-    glm::mat4 matWorld = glm::translate(glm::mat4(1.0), glm::vec3(0, 0, 0));
-    glm::mat4 matView = glm::lookAt(glm::vec3(0, 0.5f, 5), glm::vec3(0, 0.5f, 0), glm::vec3(0, 1, 0));
-    glm::mat4 matProj = glm::perspective(glm::radians(45.f), (float)fbwidth / (float)fbheight, 0.0f, 1.f);
-
-    glm::mat4 wvp = matProj * matView * matWorld;
-
+#include <s1516.h>
 
 int main()
 {
-	int fbwidth = 1024;
-	int fbheight = 768;
+    int32_t fbwidth = 1024;
+    int32_t fbheight = 768;
 
     renderer_t* rd = new_renderer(fbwidth, fbheight);
 
@@ -30,31 +17,16 @@ int main()
         scene_add_instance(sc, model_id, &instance_id);
     }
 
-    renderer_render_scene(rd, sc);
+    scene_set_camera_lookat(s1516_int(5), s1516_int(5), s1516_int(5), 0, 0, 0, 0, s1516_int(1), 0);
+    scene_set_camera_perspective(s1516_flt(70.0f * 3.14f / 180.0f), s1516_flt((float)fbwidth / fbheight), s1516_flt(0.01f), s1516_flt(10.0f));
 
-    // convert framebuffer from bgra to rgba for stbi_image_write
+    for (int32_t i = 0; i < 1000; i++)
     {
-        uint8_t* rgba8_pixels = (uint8_t*)malloc(fbwidth * fbheight * 4);
-        assert(rgba8_pixels);
-
-        // readback framebuffer contents
-        framebuffer_t* fb = renderer_get_framebuffer(rd);
-        framebuffer_pack_row_major(fb, 0, 0, fbwidth, fbheight, pixelformat_r8g8b8a8_unorm, rgba8_pixels);
-
-        if (!stbi_write_png("output.png", fbwidth, fbheight, 4, rgba8_pixels, fbwidth * 4))
-        {
-            fprintf(stderr, "Failed to write image\n");
-            exit(1);
-        }
-
-        free(rgba8_pixels);
+        renderer_render_scene(rd, sc);
     }
 
     delete_scene(sc);
     delete_renderer(rd);
-
-    // display image
-    system("output.png");
 
     return 0;
 }

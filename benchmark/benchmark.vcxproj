@@ -132,6 +132,9 @@
     <ProjectReference Include="..\rasterizer\rasterizer.vcxproj">
       <Project>{d4f1e22e-cfbc-4920-9e8e-a9110c526c9e}</Project>
     </ProjectReference>
+    <ProjectReference Include="..\renderer\renderer.vcxproj">
+      <Project>{2bb11c47-8690-486d-8098-e0dba2bcbe20}</Project>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
