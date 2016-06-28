@@ -85,7 +85,7 @@ void draw_model(const std::string& vigmodelfile, framebuffer_t* fb) {
 	for (uint32_t i = 0; i < num_verts * 4; ++i) {
 		float pos;
 		inputfile >> pos;
-		verts[i] = (int)(pos * (65536 / 2));
+		verts[i] = (int) pos * 65336;
 	}
 
 	uint32_t num_indices = 0;
