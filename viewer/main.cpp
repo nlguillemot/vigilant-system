@@ -59,8 +59,8 @@ void init_window(int32_t width, int32_t height)
     HWND hWnd = CreateWindowEx(
         0, TEXT("WindowClass"),
         TEXT("viewer"),
-		WS_POPUP,
-        0, 0, wr.right - wr.left, wr.bottom - wr.top,
+		WS_OVERLAPPEDWINDOW & ~(WS_MAXIMIZEBOX),
+        CW_USEDEFAULT, CW_USEDEFAULT, wr.right - wr.left, wr.bottom - wr.top,
         0, 0, GetModuleHandle(NULL), 0);
 
     PIXELFORMATDESCRIPTOR pfd;
@@ -100,6 +100,7 @@ void main()
 )GLSL";
 
 const char* g_GridFS = R"GLSL(#version 430
+layout(origin_upper_left) in vec4 gl_FragCoord;
 layout(location = 0) uniform int show_tiles;
 layout(location = 1) uniform int show_coarse;
 layout(location = 2) uniform int show_fine;
