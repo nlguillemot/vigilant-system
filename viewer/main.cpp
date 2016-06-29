@@ -7,6 +7,9 @@
 #define FLYTHROUGH_CAMERA_IMPLEMENTATION
 #include <flythrough_camera.h>
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
+
 #include <Windows.h>
 #include <DirectXMath.h>
 
@@ -309,6 +312,9 @@ int main()
         
 		bool switched_model = false;
 
+        bool requested_screenshot = false;
+        std::string screenshot_filename;
+
 		switched_model |= loaded_model_first_ids[curr_model_index] == -1;
 
 		ImGui::SetNextWindowSize(ImVec2(400, 200));
@@ -344,6 +350,20 @@ int main()
                     fread(up, sizeof(up), 1, f);
                     fread(view, sizeof(view), 1, f);
                     fclose(f);
+                }
+            }
+
+            if (ImGui::Button("Take screenshot"))
+            {
+                screenshot_filename = GetSaveFileNameEasy();
+                if (!screenshot_filename.empty())
+                {
+                    requested_screenshot = true;
+                    size_t found_dot = screenshot_filename.find_last_of('.');
+                    if (found_dot == std::string::npos || screenshot_filename.substr(found_dot) != std::string("png"))
+                    {
+                        screenshot_filename += ".png";
+                    }
                 }
             }
 
@@ -415,6 +435,12 @@ int main()
         {
             framebuffer_t* fb = renderer_get_framebuffer(rd);
             framebuffer_pack_row_major(fb, 0, 0, fbwidth, fbheight, pixelformat_r8g8b8a8_unorm, rgba8_pixels);
+            
+            if (requested_screenshot)
+            {
+                stbi_write_png(screenshot_filename.c_str(), fbwidth, fbheight, 4, rgba8_pixels, fbwidth * 4);
+            }
+            
             // flip the rows to appease the OpenGL gods
             for (int32_t row = 0; row < fbheight / 2; row++)
             {
@@ -425,6 +451,7 @@ int main()
                     *(uint32_t*)&rgba8_pixels[((fbheight - row - 1) * fbwidth + col) * 4] = tmp;
                 }
             }
+
             glDrawPixels(fbwidth, fbheight, GL_RGBA, GL_UNSIGNED_BYTE, rgba8_pixels);
         }
 
@@ -448,6 +475,12 @@ int main()
             if (GetCursorPos(&cursorpos) && ScreenToClient(g_hWnd, &cursorpos))
             {
                 ImGui::Text("CursorPos: (%d, %d)", cursorpos.x, cursorpos.y);
+                
+                if (cursorpos.x >= 0 && cursorpos.x < fbwidth &&
+                    cursorpos.y >= 0 && cursorpos.y < fbheight)
+                {
+                    ImGui::Text("TileID: %d", (cursorpos.y/128) * ((fbwidth+127)/128) + cursorpos.x/128);
+                }
             }
             
             LONGLONG raster_time = after_raster.QuadPart - before_raster.QuadPart;
