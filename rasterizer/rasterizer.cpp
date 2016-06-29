@@ -702,6 +702,13 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
     // loop around the buffer if necessary
     if (cmdbuf->cmdbuf_write == cmdbuf->cmdbuf_end)
     {
+        if (cmdbuf->cmdbuf_start == cmdbuf->cmdbuf_read)
+        {
+            // write is not allowed to catch up to read,
+            // to make sure read catches up to write instead
+            framebuffer_resolve_tile(fb, tile_id);
+        }
+
         cmdbuf->cmdbuf_write = cmdbuf->cmdbuf_start;
     }
 }
