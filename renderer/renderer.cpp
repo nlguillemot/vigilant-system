@@ -4,6 +4,7 @@
 
 #include <rasterizer.h>
 #include <s1516.h>
+#include <freelist.h>
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
@@ -30,8 +31,7 @@ typedef struct scene_t
     model_t* models;
     uint32_t model_count;
 
-    instance_t* instances;
-    uint32_t instance_count;
+	freelist_t<instance_t>* instances;
 
     int32_t view[16];
     int32_t proj[16];
@@ -121,10 +121,10 @@ void renderer_render_scene(renderer_t* rd, scene_t* sc)
     assert(sc);
 
     framebuffer_clear(rd->fb, 0x00000000);
-
-    for (uint32_t instance_id = 0; instance_id < sc->instance_count; instance_id++)
+	
+	for (uint32_t instance_id : *sc->instances)
     {
-        instance_t* instance = &sc->instances[instance_id];
+        instance_t* instance = &(*sc->instances)[instance_id];
         renderer_render_instance(rd, sc, instance);
     }
 
@@ -146,17 +146,15 @@ scene_t* new_scene()
 
     sc->model_count = 0;
 
-    sc->instances = (instance_t*)malloc(sizeof(instance_t) * SCENE_MAX_NUM_INSTANCES);
+	sc->instances = new freelist_t<instance_t>(SCENE_MAX_NUM_INSTANCES);
     assert(sc->instances);
-
-    sc->instance_count = 0;
     
     return sc;
 }
 
 void delete_scene(scene_t* sc)
 {
-    free(sc->instances);
+    delete sc->instances;
 
     for (uint32_t i = 0; i < sc->model_count; i++)
     {
@@ -235,16 +233,21 @@ void scene_add_instance(scene_t* sc, uint32_t model_id, uint32_t* instance_id)
 {
     assert(sc);
     assert(model_id >= 0 && model_id < sc->model_count);
-    assert(sc->instance_count < SCENE_MAX_NUM_INSTANCES);
 
-    uint32_t tmp_instance_id = sc->instance_count;
-    sc->instance_count++;
+	uint32_t tmp_instance_id = sc->instances->emplace();
 
-    instance_t* instance = &sc->instances[tmp_instance_id];
+    instance_t* instance = &(*sc->instances)[tmp_instance_id];
     instance->model_id = model_id;
 
     if (instance_id)
         *instance_id = tmp_instance_id;
+}
+
+void scene_remove_instance(scene_t* sc, uint32_t instance_id)
+{
+	assert(sc);
+
+	sc->instances->erase(instance_id);
 }
 
 void scene_set_view(scene_t* sc, int32_t view[16])

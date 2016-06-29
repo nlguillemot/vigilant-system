@@ -15,6 +15,9 @@
 #include <imgui.h>
 #include <imgui_impl_win32_gl.h>
 
+#include <string>
+#include <vector>
+
 #pragma comment(lib, "OpenGL32.lib")
 #pragma comment(lib, "glu32.lib")
 
@@ -148,14 +151,32 @@ int main()
 
     renderer_t* rd = new_renderer(fbwidth, fbheight);
 
+	const char* all_model_names[] = {
+		"cube",
+		"gourd"
+	};
+
+	static const size_t num_models = sizeof(all_model_names) / sizeof(*all_model_names);
+
+	uint32_t loaded_model_first_ids[num_models];
+	uint32_t loaded_model_num_ids[num_models];
+	for (size_t i = 0; i < num_models; i++)
+	{
+		loaded_model_first_ids[i] = -1;
+	}
+
+	std::vector<uint32_t> curr_instances;
+
+	int32_t curr_model_index = 0;
+
     scene_t* sc = new_scene();
-    uint32_t first_model_id, num_added_models;
-    scene_add_models(sc, "assets/gourd/gourd.obj", "assets/gourd/", &first_model_id, &num_added_models);
-    for (uint32_t model_id = first_model_id; model_id < first_model_id + num_added_models; model_id++)
-    {
-        uint32_t instance_id;
-        scene_add_instance(sc, model_id, &instance_id);
-    }
+    //uint32_t first_model_id, num_added_models;
+    //scene_add_models(sc, "assets/gourd/gourd.obj", "assets/gourd/", &first_model_id, &num_added_models);
+    //for (uint32_t model_id = first_model_id; model_id < first_model_id + num_added_models; model_id++)
+    //{
+    //    uint32_t instance_id;
+    //    scene_add_instance(sc, model_id, &instance_id);
+    //}
 
     // compute projection matrix with DirectXMath because lazy
     {
@@ -203,13 +224,46 @@ int main()
 
         ImGui_ImplWin32GL_NewFrame();
         
+		bool switched_model = false;
+
+		switched_model |= loaded_model_first_ids[curr_model_index] == -1;
+
+		ImGui::SetNextWindowSize(ImVec2(400, 200));
         if (ImGui::Begin("Toolbox"))
         {
             ImGui::Checkbox("Show tiles", &show_tiles);
             ImGui::Checkbox("Show coarse blocks", &show_coarse_blocks);
             ImGui::Checkbox("Show fine blocks", &show_fine_blocks);
-            ImGui::End();
+
+			if (ImGui::ListBox("Model selection", &curr_model_index, all_model_names, num_models))
+			{
+				switched_model = true;
+			}
         }
+		ImGui::End();
+
+		if (switched_model)
+		{
+			for (uint32_t instance_id : curr_instances)
+			{
+				scene_remove_instance(sc, instance_id);
+			}
+			curr_instances.clear();
+
+			if (loaded_model_first_ids[curr_model_index] == -1)
+			{
+				std::string filename = std::string("assets/") + all_model_names[curr_model_index] + "/" + all_model_names[curr_model_index] + ".obj";
+				std::string mtl_basepath = std::string("assets/") + all_model_names[curr_model_index] + "/";
+				scene_add_models(sc, filename.c_str(), mtl_basepath.c_str(), &loaded_model_first_ids[curr_model_index], &loaded_model_num_ids[curr_model_index]);
+			}
+
+			for (uint32_t model_id = loaded_model_first_ids[curr_model_index]; model_id < loaded_model_first_ids[curr_model_index] + loaded_model_num_ids[curr_model_index]; model_id++)
+			{
+				uint32_t new_instance_id;
+				scene_add_instance(sc, model_id, &new_instance_id);
+				curr_instances.push_back(new_instance_id);
+			}
+		}
 
         QueryPerformanceCounter(&now);
         float delta_time_sec = (float)(now.QuadPart - then.QuadPart) / freq.QuadPart;
@@ -282,8 +336,8 @@ int main()
             LONGLONG raster_time = after_raster.QuadPart - before_raster.QuadPart;
             LONGLONG raster_time_us = raster_time * 1000000 / freq.QuadPart;
             ImGui::Text("Raster time: %llu microseconds", raster_time_us);
-            ImGui::End();
         }
+		ImGui::End();
 
         ImGui::Render();
 
