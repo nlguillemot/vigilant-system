@@ -819,12 +819,10 @@ static void rasterize_triangle(
         int32_t one_over_w = s1516_div(1 << 16, clipVerts[v].w);
 
         // convert to 16.8 window coordinates
-        verts[v].x = ((s1516_mul(clipVerts[v].x, one_over_w) + (1 << 16)) / 2 * fb->width_in_pixels) >> 8;
-        verts[v].y = ((s1516_mul(-clipVerts[v].y, one_over_w) + (1 << 16)) / 2 * fb->height_in_pixels) >> 8;
+        verts[v].x = ((s1516_mul(clipVerts[v].x, one_over_w) + (1 << 16)) / 2 * (int32_t)fb->width_in_pixels) >> 8;
+        verts[v].y = ((s1516_mul(-clipVerts[v].y, one_over_w) + (1 << 16)) / 2 * (int32_t)fb->height_in_pixels) >> 8;
 
-        // for now assuming that there's no overflow when converting to 16.8
-        assert((verts[v].x & 0xFF000000) == 0);
-        assert((verts[v].y & 0xFF000000) == 0);
+        // TODO: clip things that all outside the guard band
 
         verts[v].z = s1516_mul(clipVerts[v].z, one_over_w);
         verts[v].w = clipVerts[v].w;
