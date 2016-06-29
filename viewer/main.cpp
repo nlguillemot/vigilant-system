@@ -57,12 +57,13 @@ void init_window(int32_t width, int32_t height)
     wc.lpszClassName = TEXT("WindowClass");
     RegisterClassEx(&wc);
 
+    DWORD dwStyle = WS_OVERLAPPEDWINDOW & ~(WS_MAXIMIZEBOX);
     RECT wr = { 0, 0, width, height };
-    AdjustWindowRect(&wr, 0, FALSE);
+    AdjustWindowRect(&wr, dwStyle, FALSE);
     g_hWnd = CreateWindowEx(
         0, TEXT("WindowClass"),
         TEXT("viewer"),
-		WS_OVERLAPPEDWINDOW & ~(WS_MAXIMIZEBOX),
+        dwStyle,
         CW_USEDEFAULT, CW_USEDEFAULT, wr.right - wr.left, wr.bottom - wr.top,
         0, 0, GetModuleHandle(NULL), 0);
 
@@ -178,6 +179,26 @@ std::string GetOpenFileNameEasy()
     }
 }
 
+__forceinline uint32_t pdep_u32(uint32_t source, uint32_t mask)
+{
+    // horribly inefficient, but that's life without AVX2.
+    // however, typically not a problem since you only need to swizzle once up front.
+    // Implementation based on the pseudocode in http://www.felixcloutier.com/x86/PDEP.html
+    uint32_t temp = source;
+    uint32_t dest = 0;
+    uint32_t m = 0, k = 0;
+    while (m < 32)
+    {
+        if (mask & (1 << m))
+        {
+            dest = (dest & ~(1 << m)) | (((temp & (1 << k)) >> k) << m);
+            k = k + 1;
+        }
+        m = m + 1;
+    }
+    return dest;
+}
+
 const char* g_GridVS = R"GLSL(#version 150
 void main()
 {
@@ -290,8 +311,8 @@ int main()
     GetCursorPos(&oldcursor);
 
     bool show_tiles = true;
-    bool show_coarse_blocks = true;
-    bool show_fine_blocks = true;
+    bool show_coarse_blocks = false;
+    bool show_fine_blocks = false;
 
     uint8_t* rgba8_pixels = (uint8_t*)malloc(fbwidth * fbheight * 4);
     assert(rgba8_pixels);
@@ -299,7 +320,7 @@ int main()
     // readback framebuffer contents
     framebuffer_t* fb = renderer_get_framebuffer(rd);
 
-    while (!(GetAsyncKeyState(VK_ESCAPE) & 0x8000))
+    while (!(GetActiveWindow() == g_hWnd && (GetAsyncKeyState(VK_ESCAPE) & 0x8000)))
     {
         MSG msg;
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
@@ -360,7 +381,7 @@ int main()
                 {
                     requested_screenshot = true;
                     size_t found_dot = screenshot_filename.find_last_of('.');
-                    if (found_dot == std::string::npos || screenshot_filename.substr(found_dot) != std::string("png"))
+                    if (found_dot == std::string::npos || screenshot_filename.substr(found_dot) != std::string(".png"))
                     {
                         screenshot_filename += ".png";
                     }
@@ -404,17 +425,22 @@ int main()
         GetCursorPos(&cursor);
 
         // only move and rotate camera when right mouse button is pressed
-        float activated = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? 1.0f : 0.0f;
+        float activated = GetActiveWindow() == g_hWnd && (GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? 1.0f : 0.0f;
+        bool bactivated = activated != 0.0f;
+
+        auto keypressed = [bactivated](int vkey) {
+            return bactivated && (GetAsyncKeyState(vkey) & 0x8000);
+        };
 
         flythrough_camera_update(
             eye, look, up, view,
             delta_time_sec,
-            10.0f * ((GetAsyncKeyState(VK_LSHIFT) & 0x8000) ? 2.0f : 1.0f) * activated,
+            (10.0f * keypressed(VK_LSHIFT) ? 2.0f : 1.0f) * activated,
             0.5f * activated,
             80.0f,
             cursor.x - oldcursor.x, cursor.y - oldcursor.y,
-            GetAsyncKeyState('W') & 0x8000, GetAsyncKeyState('A') & 0x8000, GetAsyncKeyState('S') & 0x8000, GetAsyncKeyState('D') & 0x8000,
-            GetAsyncKeyState(VK_SPACE) & 0x8000, GetAsyncKeyState(VK_LCONTROL) & 0x8000,
+            keypressed('W'), keypressed('A'), keypressed('S'), keypressed('D'),
+            keypressed(VK_SPACE), keypressed(VK_LCONTROL),
             FLYTHROUGH_CAMERA_LEFT_HANDED_BIT);
 
         int32_t view_s1516[16];
@@ -453,6 +479,17 @@ int main()
             }
 
             glDrawPixels(fbwidth, fbheight, GL_RGBA, GL_UNSIGNED_BYTE, rgba8_pixels);
+
+            // flip again so the rgba8_pixels is coherent between frames (easier debugging)
+            for (int32_t row = 0; row < fbheight / 2; row++)
+            {
+                for (int32_t col = 0; col < fbwidth; col++)
+                {
+                    uint32_t tmp = *(uint32_t*)&rgba8_pixels[(row * fbwidth + col) * 4];
+                    *(uint32_t*)&rgba8_pixels[(row * fbwidth + col) * 4] = *(uint32_t*)&rgba8_pixels[((fbheight - row - 1) * fbwidth + col) * 4];
+                    *(uint32_t*)&rgba8_pixels[((fbheight - row - 1) * fbwidth + col) * 4] = tmp;
+                }
+            }
         }
 
 		if (show_tiles || show_coarse_blocks || show_fine_blocks)
@@ -479,7 +516,15 @@ int main()
                 if (cursorpos.x >= 0 && cursorpos.x < fbwidth &&
                     cursorpos.y >= 0 && cursorpos.y < fbheight)
                 {
-                    ImGui::Text("TileID: %d", (cursorpos.y/128) * ((fbwidth+127)/128) + cursorpos.x/128);
+                    int tile_y = cursorpos.y / 128;
+                    int tile_x = cursorpos.x / 128;
+                    int width_in_tiles = (fbwidth + 127) / 128;
+                    int tile_i = tile_y * width_in_tiles + tile_x;
+                    ImGui::Text("TileID: %d", tile_i);
+                    int tile_start = tile_i * 128 * 128;
+                    int swizzled = pdep_u32(cursorpos.x, 0x55555555 & (128 * 128 - 1));
+                    swizzled |= pdep_u32(cursorpos.y, 0xAAAAAAAA & (128 * 128 - 1));
+                    ImGui::Text("Swizzled pixel: %d + %d = %d", tile_start, swizzled, tile_start + swizzled);
                 }
             }
             

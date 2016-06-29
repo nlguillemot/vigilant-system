@@ -730,7 +730,7 @@ void framebuffer_pack_row_major(framebuffer_t* fb, int32_t x, int32_t y, int32_t
     int32_t topleft_tile_x = x / TILE_WIDTH_IN_PIXELS;
     int32_t bottomright_tile_y = (y + (height - 1)) / TILE_WIDTH_IN_PIXELS;
     int32_t bottomright_tile_x = (x + (width - 1)) / TILE_WIDTH_IN_PIXELS;
-    
+
     int32_t curr_tile_row_start = topleft_tile_y * fb->pixels_per_row_of_tiles + topleft_tile_x * PIXELS_PER_TILE;
     for (int32_t tile_y = topleft_tile_y; tile_y <= bottomright_tile_y; tile_y++)
     {
@@ -781,8 +781,6 @@ void framebuffer_pack_row_major(framebuffer_t* fb, int32_t x, int32_t y, int32_t
                     {
                         assert(!"Unknown pixel format");
                     }
-
-                    dst_i++;
                 }
             }
 
