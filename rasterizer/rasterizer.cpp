@@ -1122,7 +1122,7 @@ static void rasterize_triangle(
         uint32_t tile_row_start = first_tile_y * fb->width_in_tiles;
         for (uint32_t tile_y = first_tile_y; tile_y <= last_tile_y; tile_y++)
         {
-            uint32_t tile_i = tile_row_start;
+            uint32_t tile_i = tile_row_start + first_tile_x;
 
             int64_t tile_i_edges[3];
             int64_t tile_i_edge_trivRejs[3];
