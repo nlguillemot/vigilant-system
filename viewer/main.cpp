@@ -87,6 +87,94 @@ void init_window(int32_t width, int32_t height)
     ImGui_ImplWin32GL_Init(g_hWnd);
 }
 
+std::wstring WideFromMultiByte(const char* s)
+{
+    int bufSize = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s, -1, NULL, 0);
+    assert(bufSize != 0);
+
+    std::wstring ws(bufSize, 0);
+    assert(MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s, -1, &ws[0], bufSize));
+    ws.pop_back(); // remove null terminator
+    return ws;
+}
+
+std::wstring WideFromMultiByte(const std::string& s)
+{
+    return WideFromMultiByte(s.c_str());
+}
+
+std::string MultiByteFromWide(const wchar_t* ws)
+{
+    int bufSize = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, ws, -1, NULL, 0, NULL, NULL);
+    assert(bufSize != 0);
+
+    std::string s(bufSize, 0);
+    assert(WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, ws, -1, &s[0], bufSize, NULL, NULL));
+    s.pop_back(); // remove null terminator
+    return s;
+}
+
+std::string MultiByteFromWide(const std::wstring& ws)
+{
+    return MultiByteFromWide(ws.c_str());
+}
+
+std::string GetSaveFileNameEasy()
+{
+    // open a file name
+    WCHAR szFile[MAX_PATH*2];
+    OPENFILENAMEW ofn;
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = NULL;
+    ofn.lpstrFile = szFile;
+    ofn.lpstrFile[0] = '\0';
+    ofn.nMaxFile = sizeof(szFile);
+    ofn.lpstrFilter = L"All\0*.*\0";
+    ofn.nFilterIndex = 1;
+    ofn.lpstrFileTitle = NULL;
+    ofn.nMaxFileTitle = 0;
+    ofn.lpstrInitialDir = NULL;
+    ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
+
+    if (!GetSaveFileNameW(&ofn))
+    {
+        return "";
+    }
+    else
+    {
+        return MultiByteFromWide(ofn.lpstrFile);
+    }
+}
+
+std::string GetOpenFileNameEasy()
+{
+    // open a file name
+    WCHAR szFile[MAX_PATH * 2];
+    OPENFILENAMEW ofn;
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = NULL;
+    ofn.lpstrFile = szFile;
+    ofn.lpstrFile[0] = '\0';
+    ofn.nMaxFile = sizeof(szFile);
+    ofn.lpstrFilter = L"All\0*.*\0";
+    ofn.nFilterIndex = 1;
+    ofn.lpstrFileTitle = NULL;
+    ofn.nMaxFileTitle = 0;
+    ofn.lpstrInitialDir = NULL;
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
+    if (!GetOpenFileNameW(&ofn))
+    {
+        return "";
+    }
+    else
+    {
+        return MultiByteFromWide(ofn.lpstrFile);
+    }
+}
+
 const char* g_GridVS = R"GLSL(#version 150
 void main()
 {
@@ -188,7 +276,8 @@ int main()
 
     float eye[3] = { 0.0f, 0.0f, 3.0f };
     float look[3] = { 0.0f, 0.0f, -1.0f };
-    const float up[3] = { 0.0f, 1.0f, 0.0f };
+    float up[3] = { 0.0f, 1.0f, 0.0f };
+    float view[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
 
     LARGE_INTEGER then, now, freq;
     QueryPerformanceFrequency(&freq);
@@ -229,6 +318,35 @@ int main()
             ImGui::Checkbox("Show coarse blocks", &show_coarse_blocks);
             ImGui::Checkbox("Show fine blocks", &show_fine_blocks);
 
+            if (ImGui::Button("Save camera"))
+            {
+                std::string camfile = GetSaveFileNameEasy();
+                FILE* f = fopen(camfile.c_str(), "wb");
+                if (f)
+                {
+                    fwrite(eye, sizeof(eye), 1, f);
+                    fwrite(look, sizeof(look), 1, f);
+                    fwrite(up, sizeof(up), 1, f);
+                    fwrite(view, sizeof(view), 1, f);
+                    fclose(f);
+                }
+            }
+            
+            ImGui::SameLine();
+            if (ImGui::Button("Load camera"))
+            {
+                std::string camfile = GetOpenFileNameEasy();
+                FILE* f = fopen(camfile.c_str(), "rb");
+                if (f)
+                {
+                    fread(eye, sizeof(eye), 1, f);
+                    fread(look, sizeof(look), 1, f);
+                    fread(up, sizeof(up), 1, f);
+                    fread(view, sizeof(view), 1, f);
+                    fclose(f);
+                }
+            }
+
 			if (ImGui::ListBox("Model selection", &curr_model_index, all_model_names, num_models))
 			{
 				switched_model = true;
@@ -268,7 +386,6 @@ int main()
         // only move and rotate camera when right mouse button is pressed
         float activated = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? 1.0f : 0.0f;
 
-        float view[16];
         flythrough_camera_update(
             eye, look, up, view,
             delta_time_sec,
