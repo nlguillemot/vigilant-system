@@ -33,6 +33,7 @@ x64
 *.suo
 *.db
 *.opendb
+*.sdf
 
 # the test output image
 output.png
