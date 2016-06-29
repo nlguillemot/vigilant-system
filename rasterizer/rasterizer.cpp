@@ -660,11 +660,14 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
 
     tile_cmdbuf_t* cmdbuf = &fb->tile_cmdbufs[tile_id];
     
-    if (cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write > 0 && cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write < num_dwords)
+    if (cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write > 0 && cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write < num_dwords + 1)
     {
         // read ptr is after write ptr and there's not enough room in between
         // therefore, need to flush
+        // note: write is not allowed to "catch up" to read from behind, hence why a +1 is added to keep them separate.
         framebuffer_resolve_tile(fb, tile_id);
+        // after resolve, read should now have "caught up" to write from behind
+        assert(cmdbuf->cmdbuf_read == cmdbuf->cmdbuf_write);
     }
 
     if (cmdbuf->cmdbuf_end - cmdbuf->cmdbuf_write < num_dwords)
@@ -678,11 +681,14 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
         *cmdbuf->cmdbuf_write = tilecmd_id_resetbuf;
         cmdbuf->cmdbuf_write = cmdbuf->cmdbuf_start;
 
-        if (cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write > 0 && cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write < num_dwords)
+        if (cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write > 0 && cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write < num_dwords + 1)
         {
-            // read ptr is after write ptr and the write ptr can't pass the read ptr
+            // read ptr is after write ptr and there's not enough room in between
             // therefore, need to flush
+            // note: write is not allowed to "catch up" to read from behind, hence why a +1 is added to keep them separate.
             framebuffer_resolve_tile(fb, tile_id);
+            // after resolve, read should now have "caught up" to write from behind
+            assert(cmdbuf->cmdbuf_read == cmdbuf->cmdbuf_write);
         }
     }
 
