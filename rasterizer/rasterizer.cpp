@@ -1127,11 +1127,9 @@ static void rasterize_triangle(
             if (tile_edge_dys[v] > 0) edge_trivAccs[v] += tile_edge_dys[v];
         }
 
-        int32_t tile_row_start = first_tile_y * fb->width_in_tiles;
+        int32_t tile_row_start = first_tile_y * fb->width_in_tiles + first_tile_x;
         for (int32_t tile_y = first_tile_y; tile_y <= last_tile_y; tile_y++)
         {
-            int32_t tile_i = tile_row_start + first_tile_x;
-
             int64_t tile_i_edges[3];
             int64_t tile_i_edge_trivRejs[3];
             int64_t tile_i_edge_trivAccs[3];
@@ -1141,6 +1139,8 @@ static void rasterize_triangle(
                 tile_i_edge_trivRejs[v] = edge_trivRejs[v];
                 tile_i_edge_trivAccs[v] = edge_trivAccs[v];
             }
+
+            int32_t tile_i = tile_row_start;
 
             for (int32_t tile_x = first_tile_x; tile_x <= last_tile_x; tile_x++)
             {
