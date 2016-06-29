@@ -97,7 +97,8 @@ std::wstring WideFromMultiByte(const char* s)
     assert(bufSize != 0);
 
     std::wstring ws(bufSize, 0);
-    assert(MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s, -1, &ws[0], bufSize));
+    bool status = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s, -1, &ws[0], bufSize) != 0;
+    assert(status);
     ws.pop_back(); // remove null terminator
     return ws;
 }
@@ -113,7 +114,8 @@ std::string MultiByteFromWide(const wchar_t* ws)
     assert(bufSize != 0);
 
     std::string s(bufSize, 0);
-    assert(WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, ws, -1, &s[0], bufSize, NULL, NULL));
+    bool status = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, ws, -1, &s[0], bufSize, NULL, NULL) != 0;
+    assert(status);
     s.pop_back(); // remove null terminator
     return s;
 }
@@ -126,20 +128,20 @@ std::string MultiByteFromWide(const std::wstring& ws)
 std::string GetSaveFileNameEasy()
 {
     // open a file name
-    WCHAR szFile[MAX_PATH*2];
+    WCHAR szFile[MAX_PATH * 2] = {};
     OPENFILENAMEW ofn;
     ZeroMemory(&ofn, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = NULL;
     ofn.lpstrFile = szFile;
     ofn.lpstrFile[0] = '\0';
-    ofn.nMaxFile = sizeof(szFile);
+    ofn.nMaxFile = sizeof(szFile)/sizeof(*szFile);
     ofn.lpstrFilter = L"All\0*.*\0";
     ofn.nFilterIndex = 1;
     ofn.lpstrFileTitle = NULL;
     ofn.nMaxFileTitle = 0;
     ofn.lpstrInitialDir = NULL;
-    ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
+    ofn.Flags = OFN_HIDEREADONLY;
 
     if (!GetSaveFileNameW(&ofn))
     {
@@ -154,14 +156,14 @@ std::string GetSaveFileNameEasy()
 std::string GetOpenFileNameEasy()
 {
     // open a file name
-    WCHAR szFile[MAX_PATH * 2];
+    WCHAR szFile[MAX_PATH * 2] = {};
     OPENFILENAMEW ofn;
     ZeroMemory(&ofn, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = NULL;
     ofn.lpstrFile = szFile;
     ofn.lpstrFile[0] = '\0';
-    ofn.nMaxFile = sizeof(szFile);
+    ofn.nMaxFile = sizeof(szFile) / sizeof(*szFile);
     ofn.lpstrFilter = L"All\0*.*\0";
     ofn.nFilterIndex = 1;
     ofn.lpstrFileTitle = NULL;
@@ -235,7 +237,7 @@ int main()
     int fbwidth = 1024;
     int fbheight = 768;
 
-    SetProcessDPIAware();
+    //SetProcessDPIAware();
     init_window(fbwidth, fbheight);
 
 	GLuint gridsp;
