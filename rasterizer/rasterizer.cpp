@@ -908,6 +908,10 @@ static void rasterize_triangle(
 
         int32_t rcp_triarea2 = s1516_div(1 << 16, triarea2);
 
+        // TODO: Find a better way to interpolate barycentrics that doesn't result in 0 for 1/triarea2?
+        if (rcp_triarea2 == 0)
+            rcp_triarea2 = 1;
+
 		// compute edge equations with reduced precision thanks to being localized to the tiles
 
 		int32_t edges[3];
@@ -1053,17 +1057,18 @@ static void rasterize_triangle(
             goto skiptri;
         }
 
-        int64_t rcp_triarea2;
-        {
-            // pre-multiply by the base
-            int64_t temp = (int64_t)1 << 32;
-            // Rounding: mid values are rounded up (down for negative values)
-            if ((temp >= 0 && triarea2 >= 0) || (temp < 0 && triarea2 < 0))
-                temp += triarea2 / 2;
-            else
-                temp -= triarea2 / 2;
-            rcp_triarea2 = temp / triarea2;
-        }
+        // pre-multiply by the base
+        int64_t rcp_triarea2 = (int64_t)1 << 32;
+        // Rounding: mid values are rounded up (down for negative values)
+        if ((rcp_triarea2 >= 0 && triarea2 >= 0) || (rcp_triarea2 < 0 && triarea2 < 0))
+            rcp_triarea2 += triarea2 / 2;
+        else
+            rcp_triarea2 -= triarea2 / 2;
+        rcp_triarea2 = rcp_triarea2 / triarea2;
+
+        // TODO: Find a better way to interpolate barycentrics that doesn't result in 0 for 1/triarea2?
+        if (rcp_triarea2 == 0)
+            rcp_triarea2 = 1;
 
         int64_t edges[3];
         int64_t edge_dxs[3], edge_dys[3];
