@@ -39,7 +39,7 @@ LRESULT CALLBACK MyWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
     return DefWindowProc(hWnd, message, wParam, lParam);
 }
 
-HDC g_hDC;
+HWND g_hWnd;
 
 void init_window(int32_t width, int32_t height)
 {
@@ -56,7 +56,7 @@ void init_window(int32_t width, int32_t height)
 
     RECT wr = { 0, 0, width, height };
     AdjustWindowRect(&wr, 0, FALSE);
-    HWND hWnd = CreateWindowEx(
+    g_hWnd = CreateWindowEx(
         0, TEXT("WindowClass"),
         TEXT("viewer"),
 		WS_OVERLAPPEDWINDOW & ~(WS_MAXIMIZEBOX),
@@ -72,19 +72,19 @@ void init_window(int32_t width, int32_t height)
     pfd.cColorBits = 32;
     pfd.iLayerType = PFD_MAIN_PLANE;
 
-    g_hDC = GetDC(hWnd);
+    HDC hDC = GetDC(g_hWnd);
 
-    int chosenPixelFormat = ChoosePixelFormat(g_hDC, &pfd);
-    SetPixelFormat(g_hDC, chosenPixelFormat, &pfd);
+    int chosenPixelFormat = ChoosePixelFormat(hDC, &pfd);
+    SetPixelFormat(hDC, chosenPixelFormat, &pfd);
 
-    HGLRC hGLRC = wglCreateContext(g_hDC);
-    wglMakeCurrent(g_hDC, hGLRC);
+    HGLRC hGLRC = wglCreateContext(hDC);
+    wglMakeCurrent(hDC, hGLRC);
 
 	LoadGLProcs();
 
-    ShowWindow(hWnd, SW_SHOWNORMAL);
+    ShowWindow(g_hWnd, SW_SHOWNORMAL);
 
-    ImGui_ImplWin32GL_Init(hWnd);
+    ImGui_ImplWin32GL_Init(g_hWnd);
 }
 
 const char* g_GridVS = R"GLSL(#version 150
@@ -171,13 +171,6 @@ int main()
 	int32_t curr_model_index = 0;
 
     scene_t* sc = new_scene();
-    //uint32_t first_model_id, num_added_models;
-    //scene_add_models(sc, "assets/gourd/gourd.obj", "assets/gourd/", &first_model_id, &num_added_models);
-    //for (uint32_t model_id = first_model_id; model_id < first_model_id + num_added_models; model_id++)
-    //{
-    //    uint32_t instance_id;
-    //    scene_add_instance(sc, model_id, &instance_id);
-    //}
 
     // compute projection matrix with DirectXMath because lazy
     {
@@ -334,6 +327,12 @@ int main()
 
         if (ImGui::Begin("Info"))
         {
+            POINT cursorpos;
+            if (GetCursorPos(&cursorpos) && ScreenToClient(g_hWnd, &cursorpos))
+            {
+                ImGui::Text("CursorPos: (%d, %d)", cursorpos.x, cursorpos.y);
+            }
+            
             LONGLONG raster_time = after_raster.QuadPart - before_raster.QuadPart;
             LONGLONG raster_time_us = raster_time * 1000000 / freq.QuadPart;
             ImGui::Text("Raster time: %llu microseconds", raster_time_us);
@@ -342,7 +341,7 @@ int main()
 
         ImGui::Render();
 
-        SwapBuffers(g_hDC);
+        SwapBuffers(GetDC(g_hWnd));
 
         then = now;
         oldcursor = cursor;

@@ -15,6 +15,15 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "imgui", "imgui\imgui.vcxpro
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "glloader", "glloader\glloader.vcxproj", "{C9A96524-9E8C-41CB-B3A6-0DD2A92A58D4}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "include", "include", "{0D7C7F20-7643-40C9-9AD1-D4E0AD4DB66A}"
+	ProjectSection(SolutionItems) = preProject
+		include\flythrough_camera.h = include\flythrough_camera.h
+		include\freelist.h = include\freelist.h
+		include\s1516.h = include\s1516.h
+		include\stb_image_write.h = include\stb_image_write.h
+		include\tiny_obj_loader.h = include\tiny_obj_loader.h
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64

@@ -1056,7 +1056,7 @@ static void rasterize_triangle(
 
         int64_t rcp_triarea2;
         {
-            // pre-multiply the base
+            // pre-multiply by the base
             int64_t temp = (int64_t)1 << 32;
             // Rounding: mid values are rounded up (down for negative values)
             if ((temp >= 0 && triarea2 >= 0) || (temp < 0 && triarea2 < 0))
