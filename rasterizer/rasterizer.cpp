@@ -1039,8 +1039,8 @@ static void rasterize_triangle(
         uint32_t last_tile_y = (bbox_max_y >> 8) / TILE_WIDTH_IN_PIXELS;
 
         // evaluate edge equation at the top left tile
-        uint32_t first_tile_px_x = (first_tile_x << 8) * TILE_WIDTH_IN_PIXELS;
-        uint32_t first_tile_px_y = (first_tile_y << 8) * TILE_WIDTH_IN_PIXELS;
+        int32_t first_tile_px_x = (first_tile_x << 8) * TILE_WIDTH_IN_PIXELS;
+        int32_t first_tile_px_y = (first_tile_y << 8) * TILE_WIDTH_IN_PIXELS;
 
         // 64 bit integers are used for the edge equations here because multiplying two 16.8 numbers requires up to 48 bits
         // this results in some extra overhead, but it's not a big deal when you consider that this happens only for large triangles.
