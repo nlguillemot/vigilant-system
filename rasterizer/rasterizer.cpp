@@ -1186,9 +1186,9 @@ static void rasterize_triangle(
                         // in the meantime, just check that at least the checked edges are within range.
                         if (v < num_tests_necessary)
                         {
-							assert(tile_i_edges[rotated_v] == (int64_t)((int32_t)tile_i_edges[rotated_v]));
-							assert(edge_dxs[rotated_v] == (int64_t)((int32_t)edge_dxs[rotated_v]));
-							assert(edge_dys[rotated_v] == (int64_t)((int32_t)edge_dys[rotated_v]));
+                            assert(tile_i_edges[rotated_v] >= INT32_MIN && tile_i_edges[rotated_v] <= INT32_MAX);
+                            assert(edge_dxs[rotated_v] >= INT32_MIN && edge_dxs[rotated_v] <= INT32_MAX);
+                            assert(edge_dys[rotated_v] >= INT32_MIN && edge_dys[rotated_v] <= INT32_MAX);
                         }
 
                         drawtilecmd.edges[v] = (int32_t)tile_i_edges[rotated_v];
