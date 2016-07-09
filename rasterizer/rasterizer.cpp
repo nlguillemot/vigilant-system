@@ -144,6 +144,38 @@ static int32_t s1516_div(int32_t a, int32_t b)
     return result;
 }
 
+static int32_t s1516_fma(int32_t a, int32_t b, int32_t c)
+{
+    int32_t result;
+    int64_t temp;
+
+    temp = (int64_t)a * (int64_t)b + ((int64_t)c << 16);
+
+    // Rounding: mid values are rounded up
+    temp += 1 << 15;
+
+    // Correct by dividing by base and saturate result
+    result = s1516_sat(temp >> 16);
+
+    return result;
+}
+
+static int32_t s1516_int(int32_t i)
+{
+    return i << 16;
+}
+
+static int32_t s1516_flt(float f)
+{
+    return (int32_t)(f * 0xffff);
+}
+
+static int32_t s168_s1516(int32_t s1516)
+{
+    return s1516_div(s1516, s1516_int(256));
+    // return s1516 >> 8;
+}
+
 typedef struct tile_cmdbuf_t
 {
     // start and past-the-end of the allocation for the buffer
@@ -897,12 +929,11 @@ static void rasterize_triangle(
         // currently not handling near plane clipping
         assert(clipVerts[v].w > 0);
 
-        int32_t one_over_w = s1516_div(1 << 16, clipVerts[v].w);
+        int32_t one_over_w = s1516_div(s1516_int(1), clipVerts[v].w);
 
-        // convert s15.16 (in clip space) to q16.8 window coordinates
-        // TODO: review how rounding (or lack thereof) affects this operation
-        verts[v].x = ((s1516_mul(clipVerts[v].x, one_over_w) + (1 << 16)) / 2 * fb->width_in_pixels) >> 8;
-        verts[v].y = ((s1516_mul(-clipVerts[v].y, one_over_w) + (1 << 16)) / 2 * fb->height_in_pixels) >> 8;
+        // convert s15.16 (in clip space) to s16.8 window coordinates
+        verts[v].x = s168_s1516(s1516_mul(s1516_div(s1516_add(s1516_mul(+clipVerts[v].x, one_over_w), s1516_int(1)), s1516_int(2)), s1516_int(fb->width_in_pixels)));
+        verts[v].y = s168_s1516(s1516_mul(s1516_div(s1516_add(s1516_mul(-clipVerts[v].y, one_over_w), s1516_int(1)), s1516_int(2)), s1516_int(fb->height_in_pixels)));
 
         // TODO: clip things that all outside the guard band
 
@@ -975,23 +1006,26 @@ static void rasterize_triangle(
         drawsmalltricmd.verts[2] = verts[2];
 
 		// make vertices relative to the last tile they're in
+        // TODO: Clip vertices further than
 		for (int32_t v = 0; v < 3; v++)
 		{
 			drawsmalltricmd.verts[v].x -= last_tile_px_x;
 			drawsmalltricmd.verts[v].y -= last_tile_px_y;
 		}
 
+        // note: multiplication of two s16.8 turns into s32.16 (truncated to s15.16, assuming that doesn't cause any problems.
         int32_t triarea2 = (verts[1].x - verts[0].x) * (verts[2].y - verts[0].y) - (verts[1].y - verts[0].y) * (verts[2].x - verts[0].x);
+        
+        // assert that nothing important is truncated
+        assert((int64_t)triarea2 == ((int64_t)verts[1].x - verts[0].x) * (verts[2].y - verts[0].y) - ((int64_t)verts[1].y - verts[0].y) * (verts[2].x - verts[0].x));
+        
         if (triarea2 <= 0)
         {
             goto skiptri;
         }
 
-        int32_t rcp_triarea2 = s1516_div(1 << 16, triarea2);
-
-        // TODO: Find a better way to interpolate barycentrics that doesn't result in 0 for 1/triarea2?
-        if (rcp_triarea2 == 0)
-            rcp_triarea2 = 1;
+        int32_t rcp_triarea2 = s1516_div(s1516_int(1), triarea2);
+        assert(rcp_triarea2 != 0);
 
 		// compute edge equations with reduced precision thanks to being localized to the tiles
 
@@ -1006,19 +1040,18 @@ static void rasterize_triangle(
             edge_dxs[v] = verts[v1].y - verts[v].y;
             edge_dys[v] = verts[v].x - verts[v1].x;
 
-            // convert to s15.16 and divide by 2*TriArea
-            edge_dxs[v] = s1516_mul(edge_dxs[v] << 8, rcp_triarea2);
-            edge_dys[v] = s1516_mul(edge_dys[v] << 8, rcp_triarea2);
-
             // compute edge equation
             // |  x  y  z |
             // | ax ay  0 |
             // | bx by  0 |
             // = ax*by - ay*bx
             // eg: a = (px-v0), b = (v1-v0)
-            // note: reusing edge_dxs and edge_dys to incorporate the 1/(2TriArea) term
-            // note: evaluated at px = (0,0) because the vertices are relative to the last tile
-            edges[v] = s1516_mul((0 - drawsmalltricmd.verts[v].x) << 8, edge_dxs[v]) - s1516_mul((0 - drawsmalltricmd.verts[v].y) << 8, -edge_dys[v]);
+            // note: evaluated at px = (0.5,0.5) because the vertices are relative to the last tile
+            const int32_t s168_zero_pt_five = 0x80;
+            edges[v] = (((s168_zero_pt_five - drawsmalltricmd.verts[v].x) * edge_dxs[v]) >> 8) - (((s168_zero_pt_five - drawsmalltricmd.verts[v].y) * -edge_dys[v]) >> 8);
+            
+            // assert nothing was lost in truncation
+            assert((int64_t)edges[v] == ((((int64_t)s168_zero_pt_five - drawsmalltricmd.verts[v].x) * edge_dxs[v]) >> 8) - ((((int64_t)s168_zero_pt_five - drawsmalltricmd.verts[v].y) * -edge_dys[v]) >> 8));
 
             // Top-left rule: shift top-left edges ever so slightly outward to make the top-left edges be the tie-breakers when rasterizing adjacent triangles
             if ((verts[v].y == verts[v1].y && verts[v].x < verts[v1].x) || verts[v].y > verts[v1].y) edges[v]--;
@@ -1162,22 +1195,15 @@ static void rasterize_triangle(
             edge_dxs[v] = verts[v1].y - verts[v].y;
             edge_dys[v] = verts[v].x - verts[v1].x;
 
-            // convert to 16 base fixed point and divide by 2*TriArea
-            edge_dxs[v] = (edge_dxs[v] << 16) * rcp_triarea2;
-            edge_dys[v] = (edge_dys[v] << 16) * rcp_triarea2;
-            
-            // Rounding: mid values are rounded up and Correct by dividing by base
-            edge_dxs[v] = (edge_dxs[v] + (1 << 15)) >> 16;
-            edge_dys[v] = (edge_dys[v] + (1 << 15)) >> 16;
-
             // compute edge equation
             // |  x  y  z |
             // | ax ay  0 |
             // | bx by  0 |
             // = ax*by - ay*bx
             // eg: a = (px-v0), b = (v1-v0)
-            // note: reusing edge_dxs and edge_dys to incorporate the 1/(2TriArea) term
-            edges[v] = (((((int64_t)first_tile_px_x - verts[v].x) << 8) * edge_dxs[v] + (1 << 15)) >> 16) - (((((int64_t)first_tile_px_y - verts[v].y) << 8) * -edge_dys[v] + (1 << 15)) >> 16);
+            // note: evaluated at px + (0.5,0.5)
+            const int32_t s168_zero_pt_five = 0x80;
+            edges[v] = ((((int64_t)first_tile_px_x + s168_zero_pt_five - verts[v].x) * edge_dxs[v]) >> 8) - ((((int64_t)first_tile_px_y + s168_zero_pt_five - verts[v].y) * -edge_dys[v]) >> 8);
 
             // Top-left rule: shift top-left edges ever so slightly outward to make the top-left edges be the tie-breakers when rasterizing adjacent triangles
             if ((verts[v].y == verts[v1].y && verts[v].x < verts[v1].x) || verts[v].y > verts[v1].y) edges[v]--;

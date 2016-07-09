@@ -85,6 +85,8 @@ static void s15164x4_mul(const int32_t* a, const int32_t* b, int32_t* dst)
 }
 
 static bool g_FilterTriangles = false;
+static int g_FilterTriangle0 = -1;
+static int g_FilterTriangle1 = -1;
 
 static void renderer_render_instance(renderer_t* rd, scene_t* sc, instance_t* instance)
 {
@@ -96,7 +98,8 @@ static void renderer_render_instance(renderer_t* rd, scene_t* sc, instance_t* in
 
     for (uint32_t index_id = 0; index_id < model->index_count; index_id += 3)
     {
-        if (g_FilterTriangles && index_id / 3 != 187 && index_id / 3 != 188)
+        if (g_FilterTriangles && (g_FilterTriangle0 != -1 || g_FilterTriangle1 != -1) &&
+            index_id / 3 != g_FilterTriangle0 && index_id / 3 != g_FilterTriangle1)
         {
             continue;
         }
@@ -132,6 +135,8 @@ void renderer_render_scene(renderer_t* rd, scene_t* sc)
     if (ImGui::Begin("Renderer"))
     {
         ImGui::Checkbox("Filter triangles", &g_FilterTriangles);
+        ImGui::SliderInt("Filter Triangle 0", &g_FilterTriangle0, -1, 1000);
+        ImGui::SliderInt("Filter Triangle 1", &g_FilterTriangle1, -1, 1000);
     }
     ImGui::End();
 

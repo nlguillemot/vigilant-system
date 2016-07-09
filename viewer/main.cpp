@@ -237,7 +237,7 @@ int main()
     int fbwidth = 1024;
     int fbheight = 768;
 
-    //SetProcessDPIAware();
+    SetProcessDPIAware();
     init_window(fbwidth, fbheight);
 
 	GLuint gridsp;
