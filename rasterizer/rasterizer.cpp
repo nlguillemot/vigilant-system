@@ -613,6 +613,34 @@ static void clear_tile(framebuffer_t* fb, int32_t tile_id, tilecmd_cleartile_t* 
     }
 }
 
+static void debugprint_cmdbuf(tile_cmdbuf_t* cmdbuf)
+{
+    int32_t read_i = (int32_t)(cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_start);
+    int32_t write_i = (int32_t)(cmdbuf->cmdbuf_write - cmdbuf->cmdbuf_start);
+    int32_t sz = (int32_t)(cmdbuf->cmdbuf_end - cmdbuf->cmdbuf_start);
+    for (int32_t i = 0; i < sz; i++)
+    {
+        if (i == write_i)
+            printf(" W");
+        else
+            printf("--");
+    }
+    printf("\n");
+    for (int32_t i = 0; i < sz; i++)
+    {
+        printf("| ");
+    }
+    printf("|\n");
+    for (int32_t i = 0; i < sz; i++)
+    {
+        if (i == read_i)
+            printf(" R");
+        else
+            printf("--");
+    }
+    printf("\n");
+}
+
 static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
 {
     tile_cmdbuf_t* cmdbuf = &fb->tile_cmdbufs[tile_id];
@@ -621,6 +649,11 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
     for (cmd = cmdbuf->cmdbuf_read; cmd != cmdbuf->cmdbuf_write; )
     {
         uint32_t tilecmd_id = *cmd;
+        
+        // debugging code for logging commands
+        // printf("Reading command [id: %d]\n", tilecmd_id);
+        // debugprint_cmdbuf(cmdbuf);
+
         if (tilecmd_id == tilecmd_id_resetbuf)
         {
             cmd = cmdbuf->cmdbuf_start;
@@ -651,6 +684,9 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
         }
     }
 
+    // read ptr should never be at the end ptr after interpreting
+    assert(cmd != cmdbuf->cmdbuf_end);
+
     cmdbuf->cmdbuf_read = cmd;
 }
 
@@ -659,7 +695,14 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
     assert(tile_id < fb->total_num_tiles);
 
     tile_cmdbuf_t* cmdbuf = &fb->tile_cmdbufs[tile_id];
-    
+
+    // read should never be at the end.
+    assert(cmdbuf->cmdbuf_read != cmdbuf->cmdbuf_end);
+
+    // debugging code for logging commands
+    // printf("Writing command [id: %d, sz: %d]\n", cmd_dwords[0], num_dwords);
+    // debugprint_cmdbuf(cmdbuf);
+
     if (cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write > 0 && cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write < num_dwords + 1)
     {
         // read ptr is after write ptr and there's not enough room in between
@@ -670,6 +713,7 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
         assert(cmdbuf->cmdbuf_read == cmdbuf->cmdbuf_write);
     }
 
+    // At this point, the read head can't be a problem. However, it's possible there isn't enough memory at the end.
     if (cmdbuf->cmdbuf_end - cmdbuf->cmdbuf_write < num_dwords)
     {
         // not enough room in the buffer to write the commands, need to loop around
@@ -679,8 +723,20 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
 
         // abandon the rest of the slop at the end of the buffer
         *cmdbuf->cmdbuf_write = tilecmd_id_resetbuf;
+
+        if (cmdbuf->cmdbuf_start == cmdbuf->cmdbuf_read)
+        {
+            // write is not allowed to catch up to read,
+            // so make sure read catches up to write instead.
+            framebuffer_resolve_tile(fb, tile_id);
+            
+            // reset read back to start since we'll set write back to start also
+            cmdbuf->cmdbuf_read = cmdbuf->cmdbuf_start;
+        }
+
         cmdbuf->cmdbuf_write = cmdbuf->cmdbuf_start;
 
+        // After loping around the buffer, it's possible that the read head is in the way again.
         if (cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write > 0 && cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write < num_dwords + 1)
         {
             // read ptr is after write ptr and there's not enough room in between
@@ -692,6 +748,11 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
         }
     }
 
+    // assert enough room in the buffer after the write
+    assert(cmdbuf->cmdbuf_end - cmdbuf->cmdbuf_write >= num_dwords);
+    // assert that the read head isn't in the way
+    assert((cmdbuf->cmdbuf_read <= cmdbuf->cmdbuf_write) || (cmdbuf->cmdbuf_read > cmdbuf->cmdbuf_write && cmdbuf->cmdbuf_read - cmdbuf->cmdbuf_write >= num_dwords + 1));
+
     // finally actually write the command
     for (int32_t i = 0; i < num_dwords; i++)
     {
@@ -699,14 +760,21 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
     }
     cmdbuf->cmdbuf_write += num_dwords;
 
+    // write is not allowed to catch up to read
+    assert(cmdbuf->cmdbuf_write != cmdbuf->cmdbuf_read);
+
     // loop around the buffer if necessary
     if (cmdbuf->cmdbuf_write == cmdbuf->cmdbuf_end)
     {
         if (cmdbuf->cmdbuf_start == cmdbuf->cmdbuf_read)
         {
             // write is not allowed to catch up to read,
-            // to make sure read catches up to write instead
+            // so make sure read catches up to write instead.
             framebuffer_resolve_tile(fb, tile_id);
+
+            // since the resolve made read ptr catch up to write ptr, that means read reached the end
+            // that also means it currently looped back to the start, so the write ptr can be put there too
+            // this is the case where the whole buffer gets consumed in one go
         }
 
         cmdbuf->cmdbuf_write = cmdbuf->cmdbuf_start;
