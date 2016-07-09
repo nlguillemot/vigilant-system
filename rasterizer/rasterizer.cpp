@@ -207,9 +207,6 @@ typedef struct tilecmd_drawsmalltri_t
 	int32_t edges[3];
 	int32_t edge_dxs[3];
 	int32_t edge_dys[3];
-    int32_t Z;
-    int32_t Z_dx;
-    int32_t Z_dy;
 	int32_t first_coarse_x, last_coarse_x;
 	int32_t first_coarse_y, last_coarse_y;
 } tilecmd_drawsmalltri_t;
