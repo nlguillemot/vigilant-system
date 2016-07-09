@@ -123,6 +123,7 @@ static void renderer_render_instance(renderer_t* rd, scene_t* sc, instance_t* in
             xverts[index_off][3] = s1516_fma(viewproj[3], vert[0], s1516_fma(viewproj[7], vert[1], s1516_fma(viewproj[11], vert[2], viewproj[15])));
         }
 
+        // TODO: buffer up more triangles to draw
         rasterizer_draw(rd->fb, &xverts[0][0], 3);
     }
 }
