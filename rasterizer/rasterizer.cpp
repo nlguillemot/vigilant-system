@@ -932,7 +932,7 @@ static void rasterize_triangle(
     for (int32_t v = 0; v < 3; v++)
     {
         // currently not handling near plane clipping
-        assert(clipVerts[v].w >= 0);
+        assert(clipVerts[v].w > 0);
 
         int32_t one_over_w = s1516_div(s1516_int(1), clipVerts[v].w);
 
