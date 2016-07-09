@@ -173,7 +173,6 @@ static int32_t s1516_flt(float f)
 static int32_t s168_s1516(int32_t s1516)
 {
     return s1516_div(s1516, s1516_int(256));
-    // return s1516 >> 8;
 }
 
 typedef struct tile_cmdbuf_t
@@ -205,10 +204,12 @@ typedef struct xyzw_i32_t
 typedef struct tilecmd_drawsmalltri_t
 {
     uint32_t tilecmd_id;
-    xyzw_i32_t verts[3];
 	int32_t edges[3];
 	int32_t edge_dxs[3];
 	int32_t edge_dys[3];
+    int32_t Z;
+    int32_t Z_dx;
+    int32_t Z_dy;
 	int32_t first_coarse_x, last_coarse_x;
 	int32_t first_coarse_y, last_coarse_y;
 } tilecmd_drawsmalltri_t;
@@ -216,7 +217,6 @@ typedef struct tilecmd_drawsmalltri_t
 typedef struct tilecmd_drawtile_t
 {
     uint32_t tilecmd_id;
-    xyzw_i32_t verts[3];
     int32_t edges[3];
     int32_t edge_dxs[3];
     int32_t edge_dys[3];
@@ -600,7 +600,6 @@ static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd
 				{
 					int32_t rotated_v = (v + vertex_rotation) % 3;
 
-					drawtilecmd.verts[v] = drawcmd->verts[rotated_v];
 					drawtilecmd.edges[v] = (int32_t)row_edges[rotated_v];
 					drawtilecmd.edge_dxs[v] = (int32_t)drawcmd->edge_dxs[rotated_v];
 					drawtilecmd.edge_dys[v] = (int32_t)drawcmd->edge_dys[rotated_v];
@@ -927,6 +926,14 @@ static void rasterize_triangle(
     framebuffer_t* fb,
     xyzw_i32_t clipVerts[3])
 {
+    // clip triangles with 3 vertices behind the near plane
+    if (clipVerts[0].w <= 0 && clipVerts[1].w <= 0 && clipVerts[2].w <= 0)
+    {
+        return;
+    }
+
+    // TODO: handle triangles with 1 and 2 vertices behind near plane by generating 2 or 1 clipped triangles (respectively)
+
     xyzw_i32_t verts[3];
     int32_t rcp_ws[3];
     for (int32_t v = 0; v < 3; v++)
@@ -937,6 +944,7 @@ static void rasterize_triangle(
         int32_t one_over_w = s1516_div(s1516_int(1), clipVerts[v].w);
 
         // convert s15.16 (in clip space) to s16.8 window coordinates
+        // note to self: should probably avoid round-to-zero here? otherwise geometry warps inwards to the center of the screen
         verts[v].x = s168_s1516(s1516_mul(s1516_div(s1516_add(s1516_mul(+clipVerts[v].x, one_over_w), s1516_int(1)), s1516_int(2)), s1516_int(fb->width_in_pixels)));
         verts[v].y = s168_s1516(s1516_mul(s1516_div(s1516_add(s1516_mul(-clipVerts[v].y, one_over_w), s1516_int(1)), s1516_int(2)), s1516_int(fb->height_in_pixels)));
 
@@ -1006,16 +1014,11 @@ static void rasterize_triangle(
         tilecmd_drawsmalltri_t drawsmalltricmd;
         drawsmalltricmd.tilecmd_id = tilecmd_id_drawsmalltri;
 
-        drawsmalltricmd.verts[0] = verts[0];
-        drawsmalltricmd.verts[1] = verts[1];
-        drawsmalltricmd.verts[2] = verts[2];
-
 		// make vertices relative to the last tile they're in
-        // TODO: Clip vertices further than
 		for (int32_t v = 0; v < 3; v++)
 		{
-			drawsmalltricmd.verts[v].x -= last_tile_px_x;
-			drawsmalltricmd.verts[v].y -= last_tile_px_y;
+			verts[v].x -= last_tile_px_x;
+			verts[v].y -= last_tile_px_y;
 		}
 
         // note: multiplication of two s16.8 turns into s32.16 (truncated to s15.16, assuming that doesn't cause any problems.
@@ -1053,7 +1056,7 @@ static void rasterize_triangle(
             // eg: a = (px-v0), b = (v1-v0)
             // note: evaluated at px = (0.5,0.5) because the vertices are relative to the last tile
             const int32_t s168_zero_pt_five = 0x80;
-            edges[v] = (((s168_zero_pt_five - drawsmalltricmd.verts[v].x) * edge_dxs[v]) >> 8) - (((s168_zero_pt_five - drawsmalltricmd.verts[v].y) * -edge_dys[v]) >> 8);
+            edges[v] = (((s168_zero_pt_five - verts[v].x) * edge_dxs[v]) >> 8) - (((s168_zero_pt_five - verts[v].y) * -edge_dys[v]) >> 8);
             
             // assert nothing was lost in truncation
             assert((int64_t)edges[v] == ((((int64_t)s168_zero_pt_five - drawsmalltricmd.verts[v].x) * edge_dxs[v]) >> 8) - ((((int64_t)s168_zero_pt_five - drawsmalltricmd.verts[v].y) * -edge_dys[v]) >> 8));
@@ -1284,8 +1287,6 @@ static void rasterize_triangle(
                     for (int32_t v = 0; v < 3; v++)
                     {
                         int32_t rotated_v = (v + vertex_rotation) % 3;
-
-                        drawtilecmd.verts[v] = verts[rotated_v];
 
                         // there's something unsound about the way 64 bit edge equations are being passed down as 32 bit
                         // it makes sense that there shouldn't be loss of precision for nearby edges (the edges you need to test against)
