@@ -104,7 +104,6 @@ int main()
 
 		results << model.modelfile.c_str() << "," << tmin.QuadPart << "," << tmax.QuadPart << "," << tavg.QuadPart << "," << std::endl;
 
-
 		delete_scene(sc);
 	}
 

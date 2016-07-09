@@ -12,6 +12,8 @@
 #define SCENE_MAX_NUM_MODELS 256
 #define SCENE_MAX_NUM_INSTANCES 512
 
+#include <imgui.h>
+
 typedef struct model_t
 {
     int32_t* positions;
@@ -82,6 +84,8 @@ static void s15164x4_mul(const int32_t* a, const int32_t* b, int32_t* dst)
     dst[15] = s1516_fma(a[3], b[12], s1516_fma(a[7], b[13], s1516_fma(a[11], b[14], s1516_mul(a[15], b[15]))));
 }
 
+static bool g_FilterTriangles = false;
+
 static void renderer_render_instance(renderer_t* rd, scene_t* sc, instance_t* instance)
 {
     int32_t model_id = instance->model_id;
@@ -92,6 +96,11 @@ static void renderer_render_instance(renderer_t* rd, scene_t* sc, instance_t* in
 
     for (uint32_t index_id = 0; index_id < model->index_count; index_id += 3)
     {
+        if (g_FilterTriangles && index_id / 3 != 187 && index_id / 3 != 188)
+        {
+            continue;
+        }
+
         int32_t xverts[3][4];
 
         // TODO: cache transformations based on vertex_id
@@ -119,6 +128,12 @@ void renderer_render_scene(renderer_t* rd, scene_t* sc)
 {
     assert(rd);
     assert(sc);
+
+    if (ImGui::Begin("Renderer"))
+    {
+        ImGui::Checkbox("Filter triangles", &g_FilterTriangles);
+    }
+    ImGui::End();
 
     framebuffer_clear(rd->fb, 0x00000000);
 	

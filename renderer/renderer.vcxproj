@@ -42,10 +42,10 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(SolutionDir)rasterizer\include\;$(ProjectDir)include\;$(SolutionDir)include\;$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
+    <IncludePath>$(SolutionDir)imgui\include\;$(SolutionDir)rasterizer\include\;$(ProjectDir)include\;$(SolutionDir)include\;$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>$(SolutionDir)rasterizer\include\;$(ProjectDir)include\;$(SolutionDir)include\;$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
+    <IncludePath>$(SolutionDir)imgui\include\;$(SolutionDir)rasterizer\include\;$(ProjectDir)include\;$(SolutionDir)include\;$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -70,6 +70,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ProjectReference Include="..\imgui\imgui.vcxproj">
+      <Project>{e840c562-271f-480f-8632-776aa73756de}</Project>
+    </ProjectReference>
     <ProjectReference Include="..\rasterizer\rasterizer.vcxproj">
       <Project>{d4f1e22e-cfbc-4920-9e8e-a9110c526c9e}</Project>
     </ProjectReference>

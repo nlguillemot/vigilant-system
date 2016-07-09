@@ -339,7 +339,9 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
 
 			if (!pixel_discarded)
 			{
-				fb->backbuffer[dst_i] = g_Color;
+				// fb->backbuffer[dst_i] = g_Color;
+                fb->backbuffer[dst_i] = (fb->backbuffer[dst_i] & 0x00FFFFFF) + 100;
+                fb->backbuffer[dst_i] |= 0xFF000000;
 			}
 
 			for (int32_t v = 0; v < 3; v++)
@@ -1113,7 +1115,7 @@ static void rasterize_triangle(
             framebuffer_push_tilecmd(fb, tile_id_downright, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
         }
     }
-    else
+    else // large triangle
     {
         // for large triangles, test each tile in their bbox for overlap
         // done using scalar code for simplicity, since rasterization dominates large triangle performance anyways.
