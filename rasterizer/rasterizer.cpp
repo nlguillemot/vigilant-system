@@ -1059,7 +1059,7 @@ static void rasterize_triangle(
             edges[v] = (((s168_zero_pt_five - verts[v].x) * edge_dxs[v]) >> 8) - (((s168_zero_pt_five - verts[v].y) * -edge_dys[v]) >> 8);
             
             // assert nothing was lost in truncation
-            assert((int64_t)edges[v] == ((((int64_t)s168_zero_pt_five - drawsmalltricmd.verts[v].x) * edge_dxs[v]) >> 8) - ((((int64_t)s168_zero_pt_five - drawsmalltricmd.verts[v].y) * -edge_dys[v]) >> 8));
+            assert((int64_t)edges[v] == ((((int64_t)s168_zero_pt_five - verts[v].x) * edge_dxs[v]) >> 8) - ((((int64_t)s168_zero_pt_five - verts[v].y) * -edge_dys[v]) >> 8));
 
             // Top-left rule: shift top-left edges ever so slightly outward to make the top-left edges be the tie-breakers when rasterizing adjacent triangles
             if ((verts[v].y == verts[v1].y && verts[v].x < verts[v1].x) || verts[v].y > verts[v1].y) edges[v]--;
