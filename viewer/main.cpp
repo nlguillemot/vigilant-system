@@ -268,7 +268,10 @@ int main()
 
 	const char* all_model_names[] = {
 		"cube",
-		"gourd"
+        "teapot",
+		"gourd",
+        "dragon",
+        "buddha"
 	};
 
 	static const size_t num_models = sizeof(all_model_names) / sizeof(*all_model_names);
@@ -340,7 +343,7 @@ int main()
 
 		switched_model |= loaded_model_first_ids[curr_model_index] == -1;
 
-		ImGui::SetNextWindowSize(ImVec2(400, 200));
+		ImGui::SetNextWindowSize(ImVec2(400, 250));
         if (ImGui::Begin("Toolbox"))
         {
             ImGui::Checkbox("Show tiles", &show_tiles);
