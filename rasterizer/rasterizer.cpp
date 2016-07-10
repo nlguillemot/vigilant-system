@@ -1047,11 +1047,14 @@ static void rasterize_triangle(
         return;
     }
 
-    // clip bbox to scissor rect
-    if (bbox_min_x < 0) bbox_min_x = 0;
-    if (bbox_min_y < 0) bbox_min_y = 0;
-    if (bbox_max_x >= (int32_t)(fb->width_in_pixels << 8)) bbox_max_x = ((int32_t)fb->width_in_pixels << 8) - 1;
-    if (bbox_max_y >= (int32_t)(fb->height_in_pixels << 8)) bbox_max_y = ((int32_t)fb->height_in_pixels << 8) - 1;
+    int32_t clamped_bbox_min_x = bbox_min_x, clamped_bbox_max_x = bbox_max_x;
+    int32_t clamped_bbox_min_y = bbox_min_y, clamped_bbox_max_y = bbox_max_y;
+
+    // clamp bbox to scissor rect
+    if (clamped_bbox_min_x < 0) clamped_bbox_min_x = 0;
+    if (clamped_bbox_min_y < 0) clamped_bbox_min_y = 0;
+    if (clamped_bbox_max_x >= (int32_t)(fb->width_in_pixels << 8)) clamped_bbox_max_x = ((int32_t)fb->width_in_pixels << 8) - 1;
+    if (clamped_bbox_max_y >= (int32_t)(fb->height_in_pixels << 8)) clamped_bbox_max_y = ((int32_t)fb->height_in_pixels << 8) - 1;
 
     // "small" triangles are no wider than a tile.
     int32_t is_large =
@@ -1086,6 +1089,10 @@ static void rasterize_triangle(
 		// make vertices relative to the last tile they're in
 		for (int32_t v = 0; v < 3; v++)
 		{
+            // the point of making them relative is to lower the required precision to 4 hex digits
+            assert((verts[v].x - last_tile_px_x) >= (-128 << 8) && (verts[v].x - last_tile_px_x) <= ((128 << 8) - 1));
+            assert((verts[v].y - last_tile_px_y) >= (-128 << 8) && (verts[v].y - last_tile_px_y) <= ((128 << 8) - 1));
+
 			verts[v].x -= last_tile_px_x;
 			verts[v].y -= last_tile_px_y;
 		}
@@ -1142,6 +1149,7 @@ static void rasterize_triangle(
 
         // draw top left tile
         int32_t first_tile_id = first_tile_y * fb->width_in_tiles + first_tile_x;
+        if (first_tile_x >= 0 && first_tile_y >= 0)
         {
             for (int32_t v = 0; v < 3; v++)
             {
@@ -1151,12 +1159,23 @@ static void rasterize_triangle(
             }
 
             drawsmalltricmd.first_coarse_x = first_rel_cb_x;
+            if (drawsmalltricmd.first_coarse_x < 0)
+            {
+                drawsmalltricmd.first_coarse_x = 0;
+            }
+            
             drawsmalltricmd.last_coarse_x = last_rel_cb_x;
             if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS)
             {
                 drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
             }
+            
             drawsmalltricmd.first_coarse_y = first_rel_cb_y;
+            if (drawsmalltricmd.first_coarse_y < 0)
+            {
+                drawsmalltricmd.first_coarse_y = 0;
+            }
+
             drawsmalltricmd.last_coarse_y = last_rel_cb_y;
             if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS)
             {
@@ -1167,7 +1186,8 @@ static void rasterize_triangle(
         }
 
         // draw top right tile
-        if (last_tile_x > first_tile_x)
+        if (last_tile_x > first_tile_x &&
+            last_tile_x < fb->width_in_tiles && first_tile_y >= 0)
         {
 			for (int32_t v = 0; v < 3; v++)
 			{
@@ -1175,8 +1195,19 @@ static void rasterize_triangle(
 			}
 
             drawsmalltricmd.first_coarse_x = 0;
+
             drawsmalltricmd.last_coarse_x = last_rel_cb_x - TILE_WIDTH_IN_COARSE_BLOCKS;
+            if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS)
+            {
+                drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
+            }
+
             drawsmalltricmd.first_coarse_y = first_rel_cb_y;
+            if (drawsmalltricmd.first_coarse_y < 0)
+            {
+                drawsmalltricmd.first_coarse_y = 0;
+            }
+
             drawsmalltricmd.last_coarse_y = last_rel_cb_y;
             if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS)
             {
@@ -1188,7 +1219,8 @@ static void rasterize_triangle(
         }
 
         // draw bottom left tile
-        if (last_tile_y > first_tile_y)
+        if (last_tile_y > first_tile_y &&
+            first_tile_x >= 0 && last_tile_y < fb->height_in_tiles)
         {
 			for (int32_t v = 0; v < 3; v++)
 			{
@@ -1196,20 +1228,32 @@ static void rasterize_triangle(
 			}
 
             drawsmalltricmd.first_coarse_x = first_rel_cb_x;
+            if (drawsmalltricmd.first_coarse_x < 0)
+            {
+                drawsmalltricmd.first_coarse_x = 0;
+            }
+
             drawsmalltricmd.last_coarse_x = last_rel_cb_x;
             if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS)
             {
                 drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
             }
+
             drawsmalltricmd.first_coarse_y = 0;
+
             drawsmalltricmd.last_coarse_y = last_rel_cb_y - TILE_WIDTH_IN_COARSE_BLOCKS;
+            if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS)
+            {
+                drawsmalltricmd.last_coarse_y = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
+            }
 
 			int32_t tile_id_down = first_tile_id + fb->width_in_tiles;
             framebuffer_push_tilecmd(fb, tile_id_down, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
         }
 
         // draw bottom right tile
-        if (last_tile_x > first_tile_x && last_tile_y > first_tile_y)
+        if (last_tile_x > first_tile_x && last_tile_y > first_tile_y &&
+            last_tile_x < fb->width_in_tiles && last_tile_y < fb->height_in_tiles)
         {
 			for (int32_t v = 0; v < 3; v++)
 			{
@@ -1217,9 +1261,20 @@ static void rasterize_triangle(
 			}
 
             drawsmalltricmd.first_coarse_x = 0;
-            drawsmalltricmd.last_coarse_y = last_rel_cb_x - TILE_WIDTH_IN_COARSE_BLOCKS;
+            
+            drawsmalltricmd.last_coarse_x = last_rel_cb_x - TILE_WIDTH_IN_COARSE_BLOCKS;
+            if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS)
+            {
+                drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
+            }
+            
             drawsmalltricmd.first_coarse_y = 0;
+            
             drawsmalltricmd.last_coarse_y = last_rel_cb_y - TILE_WIDTH_IN_COARSE_BLOCKS;
+            if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS)
+            {
+                drawsmalltricmd.last_coarse_y = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
+            }
 
 			int32_t tile_id_downright = first_tile_id + 1 + fb->width_in_tiles;
             framebuffer_push_tilecmd(fb, tile_id_downright, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
@@ -1229,10 +1284,10 @@ static void rasterize_triangle(
     {
         // for large triangles, test each tile in their bbox for overlap
         // done using scalar code for simplicity, since rasterization dominates large triangle performance anyways.
-        int32_t first_tile_x = (bbox_min_x >> 8) / TILE_WIDTH_IN_PIXELS;
-        int32_t first_tile_y = (bbox_min_y >> 8) / TILE_WIDTH_IN_PIXELS;
-        int32_t last_tile_x = (bbox_max_x >> 8) / TILE_WIDTH_IN_PIXELS;
-        int32_t last_tile_y = (bbox_max_y >> 8) / TILE_WIDTH_IN_PIXELS;
+        int32_t first_tile_x = (clamped_bbox_min_x >> 8) / TILE_WIDTH_IN_PIXELS;
+        int32_t first_tile_y = (clamped_bbox_min_y >> 8) / TILE_WIDTH_IN_PIXELS;
+        int32_t last_tile_x = (clamped_bbox_max_x >> 8) / TILE_WIDTH_IN_PIXELS;
+        int32_t last_tile_y = (clamped_bbox_max_y >> 8) / TILE_WIDTH_IN_PIXELS;
 
         // evaluate edge equation at the top left tile
         int32_t first_tile_px_x = (first_tile_x << 8) * TILE_WIDTH_IN_PIXELS;
