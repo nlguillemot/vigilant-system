@@ -1422,11 +1422,7 @@ static void rasterize_triangle(
                     {
                         int32_t rotated_v = (v + vertex_rotation) % 3;
 
-                        // there's something unsound about the way 64 bit edge equations are being passed down as 32 bit
-                        // it makes sense that there shouldn't be loss of precision for nearby edges (the edges you need to test against)
-                        // however the edge equations that aren't tested (because they are trivially accepted) won't fit in 32 bits
-                        // how is that supposed to be dealt with?
-                        // in the meantime, just check that at least the checked edges are within range.
+                        // ensure edges to test are within range of 32 bits (they should be, since trivial accept/reject only keeps nearby edges)
                         if (v < num_tests_necessary)
                         {
                             assert(tile_i_edges[rotated_v] >= INT32_MIN && tile_i_edges[rotated_v] <= INT32_MAX);
