@@ -925,9 +925,9 @@ static void rasterize_triangle(
 {
     // check which vertices are behind (or on) the near plane
     int32_t vert_near_clipped[3];
-    vert_near_clipped[0] = clipVerts[0].z <= 0;
-    vert_near_clipped[1] = clipVerts[1].z <= 0;
-    vert_near_clipped[2] = clipVerts[2].z <= 0;
+    vert_near_clipped[0] = clipVerts[0].z < 0;
+    vert_near_clipped[1] = clipVerts[1].z < 0;
+    vert_near_clipped[2] = clipVerts[2].z < 0;
     
     int32_t num_near_clipped = vert_near_clipped[0] + vert_near_clipped[1] + vert_near_clipped[2];
     
@@ -969,10 +969,42 @@ static void rasterize_triangle(
     if (num_near_clipped == 1)
     {
         // One vertex behind the near plane. In this case, triangulate the triangle into two triangles.
-        goto skiptri;
-    }
+        int32_t clipped_vert = 0;
+        if (vert_near_clipped[1]) clipped_vert = 1;
+        else if (vert_near_clipped[2]) clipped_vert = 2;
 
-    // TODO: handle triangles with 1 and 2 vertices behind near plane by generating 2 or 1 clipped triangles (respectively)
+        int32_t v1 = (clipped_vert + 1) % 3;
+        int32_t v2 = (clipped_vert + 2) % 3;
+
+        // clip the first edge
+        xyzw_i32_t clipped1;
+        int32_t a1 = s1516_div(clipVerts[clipped_vert].z, clipVerts[clipped_vert].z - clipVerts[v1].z);
+        int32_t one_over_a1 = s1516_int(1) - a1;
+        clipped1.x = s1516_mul(one_over_a1, clipVerts[clipped_vert].x) + s1516_mul(a1, clipVerts[v1].x);
+        clipped1.y = s1516_mul(one_over_a1, clipVerts[clipped_vert].y) + s1516_mul(a1, clipVerts[v1].y);
+        clipped1.z = 0;
+        clipped1.w = s1516_mul(one_over_a1, clipVerts[clipped_vert].w) + s1516_mul(a1, clipVerts[v1].w);
+        assert(clipped1.w != 0);
+
+        // clip the second edge
+        xyzw_i32_t clipped2;
+        int32_t a2 = s1516_div(clipVerts[clipped_vert].z, clipVerts[clipped_vert].z - clipVerts[v2].z);
+        int32_t one_over_a2 = s1516_int(1) - a2;
+        clipped2.x = s1516_mul(one_over_a2, clipVerts[clipped_vert].x) + s1516_mul(a2, clipVerts[v2].x);
+        clipped2.y = s1516_mul(one_over_a2, clipVerts[clipped_vert].y) + s1516_mul(a2, clipVerts[v2].y);
+        clipped2.z = 0;
+        clipped2.w = s1516_mul(one_over_a2, clipVerts[clipped_vert].w) + s1516_mul(a2, clipVerts[v2].w);
+        assert(clipped2.w != 0);
+
+        // output the first clipped triangle (note: recursive call)
+        xyzw_i32_t clipVerts1[3] = { clipVerts[0], clipVerts[1], clipVerts[2] };
+        clipVerts1[clipped_vert] = clipped1;
+        rasterize_triangle(fb, clipVerts1);
+
+        // set self up to output the second clipped triangle
+        clipVerts[clipped_vert] = clipped2;
+        clipVerts[v1] = clipped1;
+    }
 
     xyzw_i32_t verts[3];
     int32_t rcp_ws[3];
