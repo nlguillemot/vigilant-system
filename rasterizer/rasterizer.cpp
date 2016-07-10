@@ -1105,7 +1105,6 @@ static void rasterize_triangle(
 			verts[v].y -= last_tile_px_y;
 		}
 
-        // note: multiplication of two s16.8 turns into s32.16 (truncated to s15.16, assuming that doesn't cause any problems.
         int32_t triarea2 = (verts[1].x - verts[0].x) * (verts[2].y - verts[0].y) - (verts[1].y - verts[0].y) * (verts[2].x - verts[0].x);
         
         // assert that nothing important is truncated
@@ -1140,15 +1139,17 @@ static void rasterize_triangle(
             // eg: a = (px-v0), b = (v1-v0)
             // note: evaluated at px = (0.5,0.5) because the vertices are relative to the last tile
             const int32_t s168_zero_pt_five = 0x80;
-            edges[v] = (((s168_zero_pt_five - verts[v].x) * edge_dxs[v]) >> 8) - (((s168_zero_pt_five - verts[v].y) * -edge_dys[v]) >> 8);
-            
+            // edges[v] = (((s168_zero_pt_five - verts[v].x) * edge_dxs[v]) >> 8) - (((s168_zero_pt_five - verts[v].y) * -edge_dys[v]) >> 8);
+            edges[v] = (((s168_zero_pt_five - verts[v].x) * edge_dxs[v]) - ((s168_zero_pt_five - verts[v].y) * -edge_dys[v]) + (1 << 7)) >> 8;
+
             // assert nothing was lost in truncation
-            assert((int64_t)edges[v] == ((((int64_t)s168_zero_pt_five - verts[v].x) * edge_dxs[v]) >> 8) - ((((int64_t)s168_zero_pt_five - verts[v].y) * -edge_dys[v]) >> 8));
+            // assert((int64_t)edges[v] == ((((int64_t)s168_zero_pt_five - verts[v].x) * edge_dxs[v]) >> 8) - ((((int64_t)s168_zero_pt_five - verts[v].y) * -edge_dys[v]) >> 8));
+            assert((int64_t)edges[v] == (((((int64_t)s168_zero_pt_five - verts[v].x) * edge_dxs[v]) - (((int64_t)s168_zero_pt_five - verts[v].y) * -edge_dys[v]) + (1 << 7)) >> 8));
 
             // Top-left rule: shift top-left edges ever so slightly outward to make the top-left edges be the tie-breakers when rasterizing adjacent triangles
             if ((verts[v].y == verts[v1].y && verts[v].x < verts[v1].x) || verts[v].y > verts[v1].y) edges[v]--;
         }
-		
+
 		for (int32_t v = 0; v < 3; v++)
 		{
 			drawsmalltricmd.edge_dxs[v] = edge_dxs[v];
