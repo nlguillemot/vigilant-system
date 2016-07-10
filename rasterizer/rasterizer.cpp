@@ -957,20 +957,20 @@ static void rasterize_triangle(
 
         // clip the first edge
         int32_t a1 = s1516_div(clipVerts[unclipped_vert].z, clipVerts[unclipped_vert].z - clipVerts[v1].z);
-        int32_t one_over_a1 = s1516_int(1) - a1;
-        clipVerts[v1].x = s1516_mul(one_over_a1, clipVerts[unclipped_vert].x) + s1516_mul(a1, clipVerts[v1].x);
-        clipVerts[v1].y = s1516_mul(one_over_a1, clipVerts[unclipped_vert].y) + s1516_mul(a1, clipVerts[v1].y);
+        int32_t one_minus_a1 = s1516_int(1) - a1;
+        clipVerts[v1].x = s1516_mul(one_minus_a1, clipVerts[unclipped_vert].x) + s1516_mul(a1, clipVerts[v1].x);
+        clipVerts[v1].y = s1516_mul(one_minus_a1, clipVerts[unclipped_vert].y) + s1516_mul(a1, clipVerts[v1].y);
         clipVerts[v1].z = 0;
-        clipVerts[v1].w = s1516_mul(one_over_a1, clipVerts[unclipped_vert].w) + s1516_mul(a1, clipVerts[v1].w);
+        clipVerts[v1].w = s1516_mul(one_minus_a1, clipVerts[unclipped_vert].w) + s1516_mul(a1, clipVerts[v1].w);
         assert(clipVerts[v1].w != 0);
 
         // clip the second edge
         int32_t a2 = s1516_div(clipVerts[unclipped_vert].z, clipVerts[unclipped_vert].z - clipVerts[v2].z);
-        int32_t one_over_a2 = s1516_int(1) - a2;
-        clipVerts[v2].x = s1516_mul(one_over_a2, clipVerts[unclipped_vert].x) + s1516_mul(a2, clipVerts[v2].x);
-        clipVerts[v2].y = s1516_mul(one_over_a2, clipVerts[unclipped_vert].y) + s1516_mul(a2, clipVerts[v2].y);
+        int32_t one_minus_a2 = s1516_int(1) - a2;
+        clipVerts[v2].x = s1516_mul(one_minus_a2, clipVerts[unclipped_vert].x) + s1516_mul(a2, clipVerts[v2].x);
+        clipVerts[v2].y = s1516_mul(one_minus_a2, clipVerts[unclipped_vert].y) + s1516_mul(a2, clipVerts[v2].y);
         clipVerts[v2].z = 0;
-        clipVerts[v2].w = s1516_mul(one_over_a2, clipVerts[unclipped_vert].w) + s1516_mul(a2, clipVerts[v2].w);
+        clipVerts[v2].w = s1516_mul(one_minus_a2, clipVerts[unclipped_vert].w) + s1516_mul(a2, clipVerts[v2].w);
         assert(clipVerts[v2].w != 0);
     }
 
@@ -987,21 +987,21 @@ static void rasterize_triangle(
         // clip the first edge
         xyzw_i32_t clipped1;
         int32_t a1 = s1516_div(clipVerts[clipped_vert].z, clipVerts[clipped_vert].z - clipVerts[v1].z);
-        int32_t one_over_a1 = s1516_int(1) - a1;
-        clipped1.x = s1516_mul(one_over_a1, clipVerts[clipped_vert].x) + s1516_mul(a1, clipVerts[v1].x);
-        clipped1.y = s1516_mul(one_over_a1, clipVerts[clipped_vert].y) + s1516_mul(a1, clipVerts[v1].y);
+        int32_t one_minus_a1 = s1516_int(1) - a1;
+        clipped1.x = s1516_mul(one_minus_a1, clipVerts[clipped_vert].x) + s1516_mul(a1, clipVerts[v1].x);
+        clipped1.y = s1516_mul(one_minus_a1, clipVerts[clipped_vert].y) + s1516_mul(a1, clipVerts[v1].y);
         clipped1.z = 0;
-        clipped1.w = s1516_mul(one_over_a1, clipVerts[clipped_vert].w) + s1516_mul(a1, clipVerts[v1].w);
+        clipped1.w = s1516_mul(one_minus_a1, clipVerts[clipped_vert].w) + s1516_mul(a1, clipVerts[v1].w);
         assert(clipped1.w != 0);
 
         // clip the second edge
         xyzw_i32_t clipped2;
         int32_t a2 = s1516_div(clipVerts[clipped_vert].z, clipVerts[clipped_vert].z - clipVerts[v2].z);
-        int32_t one_over_a2 = s1516_int(1) - a2;
-        clipped2.x = s1516_mul(one_over_a2, clipVerts[clipped_vert].x) + s1516_mul(a2, clipVerts[v2].x);
-        clipped2.y = s1516_mul(one_over_a2, clipVerts[clipped_vert].y) + s1516_mul(a2, clipVerts[v2].y);
+        int32_t one_minus_a2 = s1516_int(1) - a2;
+        clipped2.x = s1516_mul(one_minus_a2, clipVerts[clipped_vert].x) + s1516_mul(a2, clipVerts[v2].x);
+        clipped2.y = s1516_mul(one_minus_a2, clipVerts[clipped_vert].y) + s1516_mul(a2, clipVerts[v2].y);
         clipped2.z = 0;
-        clipped2.w = s1516_mul(one_over_a2, clipVerts[clipped_vert].w) + s1516_mul(a2, clipVerts[v2].w);
+        clipped2.w = s1516_mul(one_minus_a2, clipVerts[clipped_vert].w) + s1516_mul(a2, clipVerts[v2].w);
         assert(clipped2.w != 0);
 
         // output the first clipped triangle (note: recursive call)
