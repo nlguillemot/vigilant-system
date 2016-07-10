@@ -530,6 +530,17 @@ int main()
                     int swizzled = pdep_u32(cursorpos.x, 0x55555555 & (128 * 128 - 1));
                     swizzled |= pdep_u32(cursorpos.y, 0xAAAAAAAA & (128 * 128 - 1));
                     ImGui::Text("Swizzled pixel: %d + %d = %d", tile_start, swizzled, tile_start + swizzled);
+
+                    uint32_t dwCol = *(uint32_t*)&rgba8_pixels[(cursorpos.y * fbwidth + cursorpos.x) * 4];
+                    ImGui::Text("Pixel color: %08X", dwCol);
+                    ImGui::SameLine();
+
+                    ImVec4 fCol;
+                    fCol.x = (float)((dwCol >> 0) & 0xFF) / 255.0f;
+                    fCol.y = (float)((dwCol >> 8) & 0xFF) / 255.0f;
+                    fCol.z = (float)((dwCol >> 16) & 0xFF) / 255.0f;
+                    fCol.w = (float)((dwCol >> 24) & 0xFF) / 255.0f;
+                    ImGui::ColorButton(fCol, true);
                 }
             }
             
