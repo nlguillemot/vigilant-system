@@ -923,10 +923,53 @@ static void rasterize_triangle(
     framebuffer_t* fb,
     xyzw_i32_t clipVerts[3])
 {
-    // clip triangles with 3 vertices behind the near plane
-    if (clipVerts[0].w <= 0 && clipVerts[1].w <= 0 && clipVerts[2].w <= 0)
+    // check which vertices are behind (or on) the near plane
+    int32_t vert_near_clipped[3];
+    vert_near_clipped[0] = clipVerts[0].z <= 0;
+    vert_near_clipped[1] = clipVerts[1].z <= 0;
+    vert_near_clipped[2] = clipVerts[2].z <= 0;
+    
+    int32_t num_near_clipped = vert_near_clipped[0] + vert_near_clipped[1] + vert_near_clipped[2];
+    
+    if (num_near_clipped == 3)
     {
+        // clip triangles with 3 vertices behind the near plane
         return;
+    }
+
+    if (num_near_clipped == 2)
+    {
+        // Two vertices behind the near plane. In this case, cut the associated edges short.
+        int32_t unclipped_vert = 0;
+        if (!vert_near_clipped[1]) unclipped_vert = 1;
+        else if (!vert_near_clipped[2]) unclipped_vert = 2;
+
+        int32_t v1 = (unclipped_vert + 1) % 3;
+        int32_t v2 = (unclipped_vert + 2) % 3;
+
+        // clip the first edge
+        int32_t a1 = s1516_div(clipVerts[unclipped_vert].z, clipVerts[unclipped_vert].z - clipVerts[v1].z);
+        int32_t one_over_a1 = s1516_int(1) - a1;
+        clipVerts[v1].x = s1516_mul(one_over_a1, clipVerts[unclipped_vert].x) + s1516_mul(a1, clipVerts[v1].x);
+        clipVerts[v1].y = s1516_mul(one_over_a1, clipVerts[unclipped_vert].y) + s1516_mul(a1, clipVerts[v1].y);
+        clipVerts[v1].z = 0;
+        clipVerts[v1].w = s1516_mul(one_over_a1, clipVerts[unclipped_vert].w) + s1516_mul(a1, clipVerts[v1].w);
+        assert(clipVerts[v1].w != 0);
+
+        // clip the second edge
+        int32_t a2 = s1516_div(clipVerts[unclipped_vert].z, clipVerts[unclipped_vert].z - clipVerts[v2].z);
+        int32_t one_over_a2 = s1516_int(1) - a2;
+        clipVerts[v2].x = s1516_mul(one_over_a2, clipVerts[unclipped_vert].x) + s1516_mul(a2, clipVerts[v2].x);
+        clipVerts[v2].y = s1516_mul(one_over_a2, clipVerts[unclipped_vert].y) + s1516_mul(a2, clipVerts[v2].y);
+        clipVerts[v2].z = 0;
+        clipVerts[v2].w = s1516_mul(one_over_a2, clipVerts[unclipped_vert].w) + s1516_mul(a2, clipVerts[v2].w);
+        assert(clipVerts[v2].w != 0);
+    }
+
+    if (num_near_clipped == 1)
+    {
+        // One vertex behind the near plane. In this case, triangulate the triangle into two triangles.
+        goto skiptri;
     }
 
     // TODO: handle triangles with 1 and 2 vertices behind near plane by generating 2 or 1 clipped triangles (respectively)
@@ -935,9 +978,6 @@ static void rasterize_triangle(
     int32_t rcp_ws[3];
     for (int32_t v = 0; v < 3; v++)
     {
-        // currently not handling near plane clipping
-        assert(clipVerts[v].w > 0);
-
         int32_t one_over_w = s1516_div(s1516_int(1), clipVerts[v].w);
 
         // convert s15.16 (in clip space) to s16.8 window coordinates
