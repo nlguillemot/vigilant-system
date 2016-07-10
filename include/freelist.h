@@ -24,35 +24,36 @@ class freelist_t
     size_t _max_objects;
     size_t _cap_objects;
     T* _objects;
+    uint32_t* _object_ids;
     index_t* _indices;
     uint16_t _enqueue;
 
 public:
 	struct iterator
 	{
-		iterator(index_t* in)
+		iterator(uint32_t* in)
 		{
-			_curr_index = in;
+			_curr_object_id = in;
 		}
 
 		iterator& operator++()
 		{
-			_curr_index++;
+            _curr_object_id++;
 			return *this;
 		}
 
 		uint32_t operator*()
 		{
-			return _curr_index->id;
+			return *_curr_object_id;
 		}
 
 		bool operator!=(const iterator& other) const
 		{
-			return _curr_index != other._curr_index;
+			return _curr_object_id != other._curr_object_id;
 		}
 
 	private:
-		index_t* _curr_index;
+		uint32_t* _curr_object_id;
 	};
 
     freelist_t()
@@ -61,6 +62,7 @@ public:
         _max_objects = 0;
         _cap_objects = 0;
         _objects = nullptr;
+        _object_ids = nullptr;
         _indices = nullptr;
         _enqueue = 0;
     }
@@ -75,6 +77,9 @@ public:
 
         _objects = (T*)new char[max_objects * sizeof(T)];
         assert(_objects);
+
+        _object_ids = (uint32_t*)new uint32_t[max_objects];
+        assert(_object_ids);
 
         _indices = new index_t[max_objects];
         assert(_indices);
@@ -95,6 +100,7 @@ public:
             _objects[i].~T();
         }
         delete[] _objects;
+        delete[] _object_ids;
         delete[] _indices;
     }
 
@@ -107,12 +113,16 @@ public:
         _objects = (T*)new char[other._max_objects * sizeof(T)];
         assert(_objects);
 
+        _object_ids = new uint32_t[other._max_objects];
+        assert(_object_ids);
+
         _indices = new index_t[other._max_objects];
         assert(_indices);
 
         for (size_t i = 0; i < other._num_objects; i++)
         {
             new (_objects + i) T(*(other._objects + i));
+            _object_ids[i] = other._object_ids[i];
         }
 
         for (size_t i = 0; i < other._max_objects; i++)
@@ -144,6 +154,7 @@ public:
                     {
                         new (_objects + i) T(*(other._objects + i));
                     }
+                    _object_ids[i] = other._object_ids[i];
                 }
 
                 for (size_t i = 0; i < other._max_objects; i++)
@@ -166,6 +177,7 @@ public:
         swap(_max_objects, other._max_objects);
         swap(_cap_objects, other._cap_objects);
         swap(_objects, other._objects);
+        swap(_object_ids, other._object_ids);
         swap(_indices, other._indices);
         swap(_enqueue, other._enqueue);
     }
@@ -231,22 +243,23 @@ public:
         _num_objects = _num_objects - 1;
         T* last = _objects + _num_objects;
         *o = std::move(*last);
+        _object_ids[in->index] = _object_ids[_num_objects];
         last->~T();
-        _indices[in->id & index_mask].index = in->index;
+        _indices[_object_ids[in->index] & index_mask].index = in->index;
 
         in->index = tombstone;
-        _indices[_enqueue].next = id & index_mask;
+        _indices[id & index_mask].next = _enqueue;
 		_enqueue = id & index_mask;
     }
 
 	iterator begin() const
 	{
-		return iterator{ _indices };
+		return iterator{ _object_ids };
 	}
 
 	iterator end() const
 	{
-		return iterator{ _indices + _num_objects };
+		return iterator{ _object_ids + _num_objects };
 	}
 
 private:
@@ -258,6 +271,7 @@ private:
 		_enqueue = in->next;
         in->id += new_object_id_add;
         in->index = (uint16_t)_num_objects++;
+        _object_ids[in->index] = in->id;
         return in;
     }
 };

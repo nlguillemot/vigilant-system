@@ -369,7 +369,15 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
 			if (!pixel_discarded)
 			{
 				// fb->backbuffer[dst_i] = g_Color;
+                
                 fb->backbuffer[dst_i] = (fb->backbuffer[dst_i] & 0x00FFFFFF) + 100;
+                
+                // saturate
+                if (fb->backbuffer[dst_i] > 0x000000FF)
+                {
+                    fb->backbuffer[dst_i] = 0x000000FF;
+                }
+
                 fb->backbuffer[dst_i] |= 0xFF000000;
 			}
 
