@@ -17100,9 +17100,9 @@ typedef void (GLAPIENTRYP GLUtessVertexProc)       (void *);
 typedef void (GLAPIENTRYP GLUtessEndProc)          (void);
 typedef void (GLAPIENTRYP GLUtessErrorProc)        (GLenum);
 typedef void (GLAPIENTRYP GLUtessCombineProc)      (GLdouble[3],
-	void*[4],
-	GLfloat[4],
-	void**);
+    void*[4],
+    GLfloat[4],
+    void**);
 typedef void (GLAPIENTRYP GLUtessBeginDataProc)    (GLenum, void *);
 typedef void (GLAPIENTRYP GLUtessEdgeFlagDataProc) (GLboolean, void *);
 typedef void (GLAPIENTRYP GLUtessVertexDataProc)   (void *, void *);
@@ -17412,19 +17412,19 @@ GLLOADER_API extern void (GLAPIENTRYP gluEndPolygon)(GLUtesselator *tess);
 // Indirect draw stuff
 typedef struct GLDrawArraysIndirectCommand
 {
-	GLuint count;
-	GLuint primCount;
-	GLuint first;
-	GLuint baseInstance;
+    GLuint count;
+    GLuint primCount;
+    GLuint first;
+    GLuint baseInstance;
 } GLDrawArraysIndirectCommand;
 
 typedef struct GLDrawElementsIndirectCommand
 {
-	GLuint count;
-	GLuint primCount;
-	GLuint firstIndex;
-	GLuint baseVertex;
-	GLuint baseInstance;
+    GLuint count;
+    GLuint primCount;
+    GLuint firstIndex;
+    GLuint baseVertex;
+    GLuint baseInstance;
 } GLDrawElementsIndirectCommand;
 
 #ifdef __cplusplus

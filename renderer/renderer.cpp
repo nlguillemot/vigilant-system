@@ -33,7 +33,7 @@ typedef struct scene_t
     model_t* models;
     uint32_t model_count;
 
-	freelist_t<instance_t>* instances;
+    freelist_t<instance_t>* instances;
 
     int32_t view[16];
     int32_t proj[16];
@@ -150,9 +150,9 @@ void renderer_render_scene(renderer_t* rd, scene_t* sc)
     ImGui::End();
 
     framebuffer_clear(rd->fb, 0x00000000);
-	
+    
     uint32_t instance_index = 0;
-	for (uint32_t instance_id : *sc->instances)
+    for (uint32_t instance_id : *sc->instances)
     {
         if (g_FilterInstances && (g_FilterInstance0 != -1) &&
             instance_index != g_FilterTriangle0)
@@ -185,7 +185,7 @@ scene_t* new_scene()
 
     sc->model_count = 0;
 
-	sc->instances = new freelist_t<instance_t>(SCENE_MAX_NUM_INSTANCES);
+    sc->instances = new freelist_t<instance_t>(SCENE_MAX_NUM_INSTANCES);
     assert(sc->instances);
     
     return sc;
@@ -273,7 +273,7 @@ void scene_add_instance(scene_t* sc, uint32_t model_id, uint32_t* instance_id)
     assert(sc);
     assert(model_id >= 0 && model_id < sc->model_count);
 
-	uint32_t tmp_instance_id = sc->instances->emplace();
+    uint32_t tmp_instance_id = sc->instances->emplace();
 
     instance_t* instance = &(*sc->instances)[tmp_instance_id];
     instance->model_id = model_id;
@@ -284,9 +284,9 @@ void scene_add_instance(scene_t* sc, uint32_t model_id, uint32_t* instance_id)
 
 void scene_remove_instance(scene_t* sc, uint32_t instance_id)
 {
-	assert(sc);
+    assert(sc);
 
-	sc->instances->erase(instance_id);
+    sc->instances->erase(instance_id);
 }
 
 void scene_set_view(scene_t* sc, int32_t view[16])

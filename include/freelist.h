@@ -30,32 +30,32 @@ class freelist_t
     uint16_t _dequeue;
 
 public:
-	struct iterator
-	{
-		iterator(uint32_t* in)
-		{
-			_curr_object_id = in;
-		}
+    struct iterator
+    {
+        iterator(uint32_t* in)
+        {
+            _curr_object_id = in;
+        }
 
-		iterator& operator++()
-		{
+        iterator& operator++()
+        {
             _curr_object_id++;
-			return *this;
-		}
+            return *this;
+        }
 
-		uint32_t operator*()
-		{
-			return *_curr_object_id;
-		}
+        uint32_t operator*()
+        {
+            return *_curr_object_id;
+        }
 
-		bool operator!=(const iterator& other) const
-		{
-			return _curr_object_id != other._curr_object_id;
-		}
+        bool operator!=(const iterator& other) const
+        {
+            return _curr_object_id != other._curr_object_id;
+        }
 
-	private:
-		uint32_t* _curr_object_id;
-	};
+    private:
+        uint32_t* _curr_object_id;
+    };
 
     freelist_t()
     {
@@ -71,7 +71,7 @@ public:
 
     freelist_t(size_t max_objects)
     {
-		assert(max_objects < 0x10000);
+        assert(max_objects < 0x10000);
 
         _num_objects = 0;
         _max_objects = max_objects;
@@ -261,15 +261,15 @@ public:
         _enqueue = id & index_mask;
     }
 
-	iterator begin() const
-	{
-		return iterator{ _object_ids };
-	}
+    iterator begin() const
+    {
+        return iterator{ _object_ids };
+    }
 
-	iterator end() const
-	{
-		return iterator{ _object_ids + _num_objects };
-	}
+    iterator end() const
+    {
+        return iterator{ _object_ids + _num_objects };
+    }
 
     bool empty() const
     {
@@ -303,13 +303,13 @@ private:
 template<class T>
 typename freelist_t<T>::iterator begin(const freelist_t<T>& fl)
 {
-	return fl.begin();
+    return fl.begin();
 }
 
 template<class T>
 typename freelist_t<T>::iterator end(const freelist_t<T>& fl)
 {
-	return fl.end();
+    return fl.end();
 }
 
 template<class T>
