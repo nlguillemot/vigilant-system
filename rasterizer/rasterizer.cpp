@@ -1139,15 +1139,13 @@ static void rasterize_triangle(
             // eg: a = (px-v0), b = (v1-v0)
             // note: evaluated at px = (0.5,0.5) because the vertices are relative to the last tile
             const int32_t s168_zero_pt_five = 0x80;
-            // edges[v] = (((s168_zero_pt_five - verts[v].x) * edge_dxs[v]) >> 8) - (((s168_zero_pt_five - verts[v].y) * -edge_dys[v]) >> 8);
-            edges[v] = (((s168_zero_pt_five - verts[v].x) * edge_dxs[v]) - ((s168_zero_pt_five - verts[v].y) * -edge_dys[v]) + (1 << 7)) >> 8;
-
-            // assert nothing was lost in truncation
-            // assert((int64_t)edges[v] == ((((int64_t)s168_zero_pt_five - verts[v].x) * edge_dxs[v]) >> 8) - ((((int64_t)s168_zero_pt_five - verts[v].y) * -edge_dys[v]) >> 8));
-            assert((int64_t)edges[v] == (((((int64_t)s168_zero_pt_five - verts[v].x) * edge_dxs[v]) - (((int64_t)s168_zero_pt_five - verts[v].y) * -edge_dys[v]) + (1 << 7)) >> 8));
-
+            edges[v] = ((s168_zero_pt_five - verts[v].x) * edge_dxs[v]) - ((s168_zero_pt_five - verts[v].y) * -edge_dys[v]);
+            
             // Top-left rule: shift top-left edges ever so slightly outward to make the top-left edges be the tie-breakers when rasterizing adjacent triangles
             if ((verts[v].y == verts[v1].y && verts[v].x < verts[v1].x) || verts[v].y > verts[v1].y) edges[v]--;
+
+            // truncate (don't worry, this works out because the top-left rule works as a rounding mode)
+            edges[v] = edges[v] >> 8;
         }
 
 		for (int32_t v = 0; v < 3; v++)
@@ -1344,10 +1342,13 @@ static void rasterize_triangle(
             // eg: a = (px-v0), b = (v1-v0)
             // note: evaluated at px + (0.5,0.5)
             const int32_t s168_zero_pt_five = 0x80;
-            edges[v] = ((((int64_t)first_tile_px_x + s168_zero_pt_five - verts[v].x) * edge_dxs[v]) >> 8) - ((((int64_t)first_tile_px_y + s168_zero_pt_five - verts[v].y) * -edge_dys[v]) >> 8);
+            edges[v] = ((int64_t)first_tile_px_x + s168_zero_pt_five - verts[v].x) * edge_dxs[v] - ((int64_t)first_tile_px_y + s168_zero_pt_five - verts[v].y) * -edge_dys[v];
 
             // Top-left rule: shift top-left edges ever so slightly outward to make the top-left edges be the tie-breakers when rasterizing adjacent triangles
             if ((verts[v].y == verts[v1].y && verts[v].x < verts[v1].x) || verts[v].y > verts[v1].y) edges[v]--;
+
+            // truncate (don't worry, this works out because the top-left rule works as a rounding mode)
+            edges[v] = edges[v] >> 8;
         }
 
         int64_t tile_edge_dxs[3];

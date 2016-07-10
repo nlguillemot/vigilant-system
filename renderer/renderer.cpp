@@ -87,6 +87,7 @@ static void s15164x4_mul(const int32_t* a, const int32_t* b, int32_t* dst)
 static bool g_FilterTriangles = false;
 static int g_FilterTriangle0 = -1;
 static int g_FilterTriangle1 = -1;
+static int g_FilterTriangle2 = -1;
 
 static bool g_FilterInstances = false;
 static int g_FilterInstance0 = -1;
@@ -101,8 +102,8 @@ static void renderer_render_instance(renderer_t* rd, scene_t* sc, instance_t* in
 
     for (uint32_t index_id = 0; index_id < model->index_count; index_id += 3)
     {
-        if (g_FilterTriangles && (g_FilterTriangle0 != -1 || g_FilterTriangle1 != -1) &&
-            index_id / 3 != g_FilterTriangle0 && index_id / 3 != g_FilterTriangle1)
+        if (g_FilterTriangles && (g_FilterTriangle0 != -1 || g_FilterTriangle1 != -1 || g_FilterTriangle2 != -1) &&
+            index_id / 3 != g_FilterTriangle0 && index_id / 3 != g_FilterTriangle1 && index_id / 3 != g_FilterTriangle2)
         {
             continue;
         }
@@ -141,6 +142,7 @@ void renderer_render_scene(renderer_t* rd, scene_t* sc)
         ImGui::Checkbox("Filter triangles", &g_FilterTriangles);
         ImGui::SliderInt("Filter Triangle 0", &g_FilterTriangle0, -1, 1000);
         ImGui::SliderInt("Filter Triangle 1", &g_FilterTriangle1, -1, 1000);
+        ImGui::SliderInt("Filter Triangle 2", &g_FilterTriangle2, -1, 1000);
         
         ImGui::Checkbox("Filter instances", &g_FilterInstances);
         ImGui::SliderInt("Filter Instance 0", &g_FilterInstance0, -1, (int)sc->instances->size() - 1);
@@ -152,12 +154,16 @@ void renderer_render_scene(renderer_t* rd, scene_t* sc)
     uint32_t instance_index = 0;
 	for (uint32_t instance_id : *sc->instances)
     {
-        if (!(g_FilterInstances && instance_index == g_FilterInstance0))
+        if (g_FilterInstances && (g_FilterInstance0 != -1) &&
+            instance_index != g_FilterTriangle0)
         {
-            instance_t* instance = &(*sc->instances)[instance_id];
-            renderer_render_instance(rd, sc, instance);
+            goto skipinstance;
         }
+
+        instance_t* instance = &(*sc->instances)[instance_id];
+        renderer_render_instance(rd, sc, instance);
         
+    skipinstance:
         instance_index++;
     }
 
