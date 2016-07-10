@@ -271,6 +271,21 @@ public:
 		return iterator{ _object_ids + _num_objects };
 	}
 
+    bool empty() const
+    {
+        return _num_objects == 0;
+    }
+
+    size_t size() const
+    {
+        return _num_objects;
+    }
+
+    size_t capacity() const
+    {
+        return _max_objects;
+    }
+
 private:
     index_t* insert_alloc()
     {

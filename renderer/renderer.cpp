@@ -88,6 +88,9 @@ static bool g_FilterTriangles = false;
 static int g_FilterTriangle0 = -1;
 static int g_FilterTriangle1 = -1;
 
+static bool g_FilterInstances = false;
+static int g_FilterInstance0 = -1;
+
 static void renderer_render_instance(renderer_t* rd, scene_t* sc, instance_t* instance)
 {
     int32_t model_id = instance->model_id;
@@ -138,15 +141,24 @@ void renderer_render_scene(renderer_t* rd, scene_t* sc)
         ImGui::Checkbox("Filter triangles", &g_FilterTriangles);
         ImGui::SliderInt("Filter Triangle 0", &g_FilterTriangle0, -1, 1000);
         ImGui::SliderInt("Filter Triangle 1", &g_FilterTriangle1, -1, 1000);
+        
+        ImGui::Checkbox("Filter instances", &g_FilterInstances);
+        ImGui::SliderInt("Filter Instance 0", &g_FilterInstance0, -1, (int)sc->instances->size() - 1);
     }
     ImGui::End();
 
     framebuffer_clear(rd->fb, 0x00000000);
 	
+    uint32_t instance_index = 0;
 	for (uint32_t instance_id : *sc->instances)
     {
-        instance_t* instance = &(*sc->instances)[instance_id];
-        renderer_render_instance(rd, sc, instance);
+        if (!(g_FilterInstances && instance_index == g_FilterInstance0))
+        {
+            instance_t* instance = &(*sc->instances)[instance_id];
+            renderer_render_instance(rd, sc, instance);
+        }
+        
+        instance_index++;
     }
 
     framebuffer_resolve(rd->fb);
