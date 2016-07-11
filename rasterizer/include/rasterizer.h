@@ -17,6 +17,7 @@ extern "C" {
 #endif
 
 struct framebuffer_t;
+struct framebuffer_timer_t;
 
 typedef enum pixelformat_t
 {
@@ -29,6 +30,8 @@ RASTERIZER_API void delete_framebuffer(framebuffer_t* fb);
 RASTERIZER_API void framebuffer_resolve(framebuffer_t* fb);
 RASTERIZER_API void framebuffer_pack_row_major(framebuffer_t* fb, int32_t x, int32_t y, int32_t width, int32_t height, pixelformat_t format, void* data);
 RASTERIZER_API void framebuffer_clear(framebuffer_t* fb, uint32_t color);
+RASTERIZER_API void framebuffer_reset_timers(framebuffer_t* fb);
+RASTERIZER_API void framebuffer_get_timers(framebuffer_t* fb, framebuffer_timer_t* t);
 
 RASTERIZER_API void rasterizer_draw(
     framebuffer_t* fb,
@@ -43,6 +46,8 @@ RASTERIZER_API void rasterizer_draw_indexed(
 
 // hack
 RASTERIZER_API void rasterizer_set_color(uint32_t col);
+
+
 
 #ifdef __cplusplus
 } // end extern "C"
