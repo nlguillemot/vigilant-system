@@ -33,6 +33,7 @@ RENDERER_API void scene_remove_instance(scene_t* sc, uint32_t instance_id);
 RENDERER_API void scene_set_view(scene_t* sc, int32_t view[16]);
 RENDERER_API void scene_set_projection(scene_t* sc, int32_t proj[16]);
 
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

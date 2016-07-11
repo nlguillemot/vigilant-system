@@ -226,6 +226,7 @@ typedef struct tilecmd_cleartile_t
     uint32_t color;
 } tilecmd_cleartile_t;
 
+
 typedef struct framebuffer_t
 {
     uint32_t* backbuffer;
@@ -247,19 +248,15 @@ typedef struct framebuffer_t
     // pixels_per_row_of_tiles * num_tile_rows
     int32_t pixels_per_slice;
 
-	framebuffer_timer_t fb_timers;
+	// Timers
+	uint64_t clock_smalltri_rasterize_time;
+	uint64_t clock_largetri_setup_time;
+	uint64_t clock_largetri_rasterize_time;
+	uint64_t clock_smalltri_setup_time;
+	uint64_t clock_cleartile_time;
+	uint64_t clock_fb_clear_time;
 
 } framebuffer_t;
-
-typedef struct framebuffer_timer_t {
-	int32_t clock_frame_time;
-	int32_t clock_smalltri_rasterize_time;
-	int32_t clock_largetri_setup_time;
-	int32_t clock_largetri_rasterize_time;
-	int32_t clock_smalltri_setup_time;
-	int32_t clock_cleartile_time;
-	int32_t clock_fb_clear_time;
-} framebuffer_timer_t;
 
 framebuffer_t* new_framebuffer(int32_t width, int32_t height)
 {
@@ -412,7 +409,7 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
 
 	// Add the drawing time to the small triangle rasterization timer
 	drawtime = clock() - drawtime;
-	fb->fb_timers.clock_smalltri_rasterize_time += drawtime;
+	fb->clock_smalltri_rasterize_time += drawtime;
 }
 
 static void draw_tile_smalltri(framebuffer_t* fb, int32_t tile_id, const tilecmd_drawsmalltri_t* drawcmd)
@@ -464,7 +461,7 @@ static void draw_tile_smalltri(framebuffer_t* fb, int32_t tile_id, const tilecmd
 			
 			// Before we get into the draw function, add the elapsed time to the small triangle setup timer
 			setuptime = clock() - setuptime;
-			fb->fb_timers.clock_smalltri_setup_time += setuptime;
+			fb->clock_smalltri_setup_time += setuptime;
 			
             draw_coarse_block_smalltri(fb, tile_id, coarse_topleft_x, coarse_topleft_y, &cbargs);
 
@@ -485,7 +482,7 @@ static void draw_tile_smalltri(framebuffer_t* fb, int32_t tile_id, const tilecmd
 
 	// Add the remaining time not spent drawing to the small triangle setup timer
 	setuptime = clock() - setuptime;
-	fb->fb_timers.clock_smalltri_setup_time += setuptime;
+	fb->clock_smalltri_setup_time += setuptime;
 }
 
 static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32_t coarse_topleft_x, int32_t coarse_topleft_y, const tilecmd_drawtile_t* drawcmd)
@@ -550,7 +547,7 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
     }
 
 	drawtime = clock() - drawtime;
-	fb->fb_timers.clock_largetri_rasterize_time += drawtime;
+	fb->clock_largetri_rasterize_time += drawtime;
 }
 
 static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd_drawtile_t* drawcmd)
@@ -660,7 +657,7 @@ static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd
 
 				// Stop the timer, add its value to the framebuffer's large triangle setup timer
 				setuptime = clock() - setuptime;
-				fb->fb_timers.clock_largetri_setup_time += setuptime;
+				fb->clock_largetri_setup_time += setuptime;
 
                 draw_coarse_block_largetri(fb, tile_id, coarse_topleft_x, coarse_topleft_y, &drawtilecmd);
 
@@ -693,7 +690,7 @@ static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd
     }
 	// Stop the timer, add its value to the framebuffer's large triangle setup timer
 	setuptime = clock() - setuptime;
-	fb->fb_timers.clock_largetri_setup_time += setuptime;
+	fb->clock_largetri_setup_time += setuptime;
 }
 
 static void clear_tile(framebuffer_t* fb, int32_t tile_id, tilecmd_cleartile_t* cmd)
@@ -708,7 +705,7 @@ static void clear_tile(framebuffer_t* fb, int32_t tile_id, tilecmd_cleartile_t* 
         fb->backbuffer[px] = color;
     }
 
-	fb->fb_timers.clock_cleartile_time += clock() - cleartime;
+	fb->clock_cleartile_time += clock() - cleartime;
 
 
 }
@@ -990,15 +987,40 @@ void framebuffer_clear(framebuffer_t* fb, uint32_t color)
         framebuffer_push_tilecmd(fb, tile_id, &tilecmd.tilecmd_id, sizeof(tilecmd) / sizeof(uint32_t));
     }
 	
-	fb->fb_timers.clock_fb_clear_time += clock() - cleartime;
+	fb->clock_fb_clear_time += clock() - cleartime;
 }
 
 void framebuffer_reset_timers(framebuffer_t* fb) {
-	memset(&fb->fb_timers, 0, sizeof(framebuffer_timer_t));
+	fb->clock_cleartile_time = 0;
+	fb->clock_fb_clear_time = 0;
+	fb->clock_largetri_rasterize_time = 0;
+	fb->clock_largetri_setup_time = 0;
+	fb->clock_smalltri_rasterize_time = 0;
+	fb->clock_smalltri_setup_time = 0;
 }
 
-void framebuffer_get_timers(framebuffer_t* fb, framebuffer_timer_t* t) {
-	memcpy(t, &fb->fb_timers, sizeof(framebuffer_timer_t));
+uint64_t framebuffer_get_smalltri_setup_time(framebuffer_t* fb) {
+	return fb->clock_smalltri_setup_time;
+}
+
+uint64_t framebuffer_get_smalltri_rasterize_time(framebuffer_t* fb) {
+	return fb->clock_smalltri_rasterize_time;
+}
+
+uint64_t framebuffer_get_largetri_setup_time(framebuffer_t* fb) {
+	return fb->clock_largetri_setup_time;
+}
+
+uint64_t framebuffer_get_largetri_rasterize_time(framebuffer_t* fb) {
+	return fb->clock_largetri_rasterize_time;
+}
+
+uint64_t framebuffer_get_cleartile_time(framebuffer_t* fb) {
+	return fb->clock_cleartile_time;
+}
+
+uint64_t framebuffer_get_clear_time(framebuffer_t* fb) {
+	return fb->clock_fb_clear_time;
 }
 
 static void rasterize_triangle(

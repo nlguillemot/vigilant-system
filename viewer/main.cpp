@@ -3,6 +3,7 @@
 #include <s1516.h>
 
 #include <stdio.h>
+#include <time.h>
 
 #define FLYTHROUGH_CAMERA_IMPLEMENTATION
 #include <flythrough_camera.h>
@@ -548,6 +549,16 @@ int main()
             LONGLONG raster_time_us = raster_time * 1000000 / freq.QuadPart;
             ImGui::Text("Raster time: %llu microseconds", raster_time_us);
         }
+		ImGui::End();
+
+		if (ImGui::Begin("Timers")) {
+			ImGui::Text("Small Tri Setup: %f s", framebuffer_get_smalltri_setup_time(fb) / (float) CLOCKS_PER_SEC);
+			ImGui::Text("Small Tri Draw: %f s", framebuffer_get_smalltri_rasterize_time(fb) / (float) CLOCKS_PER_SEC);
+			ImGui::Text("Large Tri Setup: %f s", framebuffer_get_largetri_setup_time(fb) / (float) CLOCKS_PER_SEC);
+			ImGui::Text("Large Tri Draw: %f s", framebuffer_get_largetri_rasterize_time(fb) / (float) CLOCKS_PER_SEC);
+			ImGui::Text("Clear Tile: %f s", framebuffer_get_cleartile_time(fb) / (float) CLOCKS_PER_SEC);
+			ImGui::Text("Clear Framebuffer: %f s", framebuffer_get_clear_time(fb) / (float) CLOCKS_PER_SEC);
+		}
 		ImGui::End();
 
         ImGui::Render();

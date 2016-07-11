@@ -149,7 +149,9 @@ void renderer_render_scene(renderer_t* rd, scene_t* sc)
     }
     ImGui::End();
 
+	framebuffer_reset_timers(rd->fb);
     framebuffer_clear(rd->fb, 0x00000000);
+
     
     uint32_t instance_index = 0;
     for (uint32_t instance_id : *sc->instances)
