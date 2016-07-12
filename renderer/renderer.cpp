@@ -14,6 +14,34 @@
 
 #include <imgui.h>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+#endif
+
+#ifdef _WIN32
+uint64_t qpc()
+{
+    LARGE_INTEGER pc;
+    QueryPerformanceCounter(&pc);
+    return pc.QuadPart;
+}
+#else
+"Missing QPC implementation for this platform!";
+#endif
+
+#ifdef _WIN32
+uint64_t qpf()
+{
+    LARGE_INTEGER pf;
+    QueryPerformanceFrequency(&pf);
+    return pf.QuadPart;
+}
+#else
+"Missing QPF implementation for this platform!";
+#endif
+
 typedef struct model_t
 {
     int32_t* positions;
@@ -42,6 +70,9 @@ typedef struct scene_t
 typedef struct renderer_t
 {
     framebuffer_t* fb;
+
+    uint64_t pc_frequency;
+    renderer_perfcounters_t perfcounters;
 } renderer_t;
 
 renderer_t* new_renderer(int32_t fbwidth, int32_t fbheight)
@@ -51,6 +82,9 @@ renderer_t* new_renderer(int32_t fbwidth, int32_t fbheight)
 
     rd->fb = new_framebuffer(fbwidth, fbheight);
     assert(rd->fb);
+
+    rd->pc_frequency = qpf();
+    memset(&rd->perfcounters, 0, sizeof(renderer_perfcounters_t));
 
     return rd;
 }
@@ -92,13 +126,10 @@ static int g_FilterTriangle2 = -1;
 static bool g_FilterInstances = false;
 static int g_FilterInstance0 = -1;
 
-static void renderer_render_instance(renderer_t* rd, scene_t* sc, instance_t* instance)
+static void renderer_render_instance(renderer_t* rd, scene_t* sc, instance_t* instance, int32_t* viewproj)
 {
     int32_t model_id = instance->model_id;
     model_t* model = &sc->models[model_id];
-
-    int32_t viewproj[16];
-    s15164x4_mul(sc->proj, sc->view, viewproj);
 
     for (uint32_t index_id = 0; index_id < model->index_count; index_id += 3)
     {
@@ -111,6 +142,8 @@ static void renderer_render_instance(renderer_t* rd, scene_t* sc, instance_t* in
         int32_t xverts[3][4];
 
         // TODO: cache transformations based on vertex_id
+
+        uint64_t mvptransform_start_pc = qpc();
 
         for (uint32_t index_off = 0; index_off < 3; index_off++)
         {
@@ -127,8 +160,10 @@ static void renderer_render_instance(renderer_t* rd, scene_t* sc, instance_t* in
             xverts[index_off][3] = s1516_fma(viewproj[3], vert[0], s1516_fma(viewproj[7], vert[1], s1516_fma(viewproj[11], vert[2], viewproj[15])));
         }
 
+        rd->perfcounters.mvptransform += qpc() - mvptransform_start_pc;
+
         // TODO: buffer up more triangles to draw
-        rasterizer_draw(rd->fb, &xverts[0][0], 3);
+        framebuffer_draw(rd->fb, &xverts[0][0], 3);
     }
 }
 
@@ -149,8 +184,12 @@ void renderer_render_scene(renderer_t* rd, scene_t* sc)
     }
     ImGui::End();
 
+    framebuffer_reset_perfcounters(rd->fb);
     framebuffer_clear(rd->fb, 0x00000000);
-    
+
+    int32_t viewproj[16];
+    s15164x4_mul(sc->proj, sc->view, viewproj);
+
     uint32_t instance_index = 0;
     for (uint32_t instance_id : *sc->instances)
     {
@@ -161,7 +200,7 @@ void renderer_render_scene(renderer_t* rd, scene_t* sc)
         }
 
         instance_t* instance = &(*sc->instances)[instance_id];
-        renderer_render_instance(rd, sc, instance);
+        renderer_render_instance(rd, sc, instance, viewproj);
         
     skipinstance:
         instance_index++;
@@ -172,7 +211,27 @@ void renderer_render_scene(renderer_t* rd, scene_t* sc)
 
 framebuffer_t* renderer_get_framebuffer(renderer_t* rd)
 {
+    assert(rd);
     return rd->fb;
+}
+
+uint64_t renderer_get_perfcounter_frequency(renderer_t* rd)
+{
+    assert(rd);
+    return rd->pc_frequency;
+}
+
+void renderer_reset_perfcounters(renderer_t* rd)
+{
+    assert(rd);
+    memset(&rd->perfcounters, 0, sizeof(renderer_perfcounters_t));
+}
+
+void renderer_get_perfcounters(renderer_t* rd, renderer_perfcounters_t* pcs)
+{
+    assert(rd);
+    assert(pcs);
+    *pcs = rd->perfcounters;
 }
 
 scene_t* new_scene()

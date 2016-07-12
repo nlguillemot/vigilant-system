@@ -3,6 +3,7 @@
 #include <s1516.h>
 
 #include <stdio.h>
+#include <time.h>
 
 #define FLYTHROUGH_CAMERA_IMPLEMENTATION
 #include <flythrough_camera.h>
@@ -318,6 +319,7 @@ int main()
     bool show_tiles = true;
     bool show_coarse_blocks = false;
     bool show_fine_blocks = false;
+    bool show_perfheatmap = false;
 
     bool show_depth = false;
 
@@ -345,13 +347,14 @@ int main()
 
         switched_model |= loaded_model_first_ids[curr_model_index] == -1;
 
-        ImGui::SetNextWindowSize(ImVec2(400, 250));
+        ImGui::SetNextWindowSize(ImVec2(400, 275));
         if (ImGui::Begin("Toolbox"))
         {
             ImGui::Checkbox("Show tiles", &show_tiles);
             ImGui::Checkbox("Show coarse blocks", &show_coarse_blocks);
             ImGui::Checkbox("Show fine blocks", &show_fine_blocks);
             ImGui::Checkbox("Show depth", &show_depth);
+            ImGui::Checkbox("Show performance heatmap", &show_perfheatmap);
 
             if (ImGui::Button("Save camera"))
             {
@@ -460,6 +463,7 @@ int main()
 
         LARGE_INTEGER before_raster, after_raster;
         QueryPerformanceCounter(&before_raster);
+        renderer_reset_perfcounters(rd);
         renderer_render_scene(rd, sc);
         QueryPerformanceCounter(&after_raster);
 
@@ -558,6 +562,57 @@ int main()
             glDisable(GL_BLEND);
         }
 
+        if (show_perfheatmap)
+        {
+            std::vector<tile_perfcounters_t> tile_pcs(framebuffer_get_total_num_tiles(fb));
+            framebuffer_get_tile_perfcounters(fb, tile_pcs.data());
+
+            std::vector<uint64_t> tile_summedticks(framebuffer_get_total_num_tiles(fb));
+
+            uint64_t perf_max = 0;
+            for (size_t i = 0; i < tile_summedticks.size(); i++)
+            {
+                const uint64_t* u64_src = (const uint64_t*)&tile_pcs[i];
+                for (size_t j = 0; j < sizeof(tile_perfcounters_t) / sizeof(uint64_t); j++)
+                {
+                    tile_summedticks[i] += u64_src[j];
+                }
+
+                if (tile_summedticks[i] > perf_max)
+                {
+                    perf_max = tile_summedticks[i];
+                }
+            }
+
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glUseProgram(0);
+            for (int32_t tile_y = 0; tile_y < (fbheight + 127) / 128; tile_y++)
+            {
+                for (int32_t tile_x = 0; tile_x < (fbwidth + 127) / 128; tile_x++)
+                {
+                    int width_in_tiles = (fbwidth + 127) / 128;
+                    int tile_i = tile_y * width_in_tiles + tile_x;
+
+                    glMatrixMode(GL_PROJECTION);
+                    glLoadIdentity();
+                    gluOrtho2D(0.0, fbwidth, fbheight, 0.0);
+                    glMatrixMode(GL_MODELVIEW);
+                    glLoadIdentity();
+
+                    glColor4d((double)tile_summedticks[tile_i] / perf_max * 0.5, 0.0, 0.0, 0.5);
+                    glBegin(GL_QUADS);
+                    glVertex2d(tile_x * 128, tile_y * 128);
+                    glVertex2d(tile_x * 128, (tile_y + 1) * 128);
+                    glVertex2d((tile_x + 1) * 128, (tile_y + 1) * 128);
+                    glVertex2d((tile_x + 1) * 128, tile_y * 128);
+                    glEnd();
+                }
+            }
+            glBlendFunc(GL_ONE, GL_ZERO);
+            glDisable(GL_BLEND);
+        }
+
         if (ImGui::Begin("Info"))
         {
             POINT cursorpos;
@@ -596,7 +651,105 @@ int main()
             
             LONGLONG raster_time = after_raster.QuadPart - before_raster.QuadPart;
             LONGLONG raster_time_us = raster_time * 1000000 / freq.QuadPart;
-            ImGui::Text("Raster time: %llu microseconds", raster_time_us);
+            ImGui::Text("Total render time: %u microseconds", raster_time_us);
+        }
+        ImGui::End();
+
+        ImGui::SetNextWindowSize(ImVec2(300, 500), ImGuiSetCond_Once);
+        if (ImGui::Begin("Performance"))
+        {
+            // Renderer performance
+            {
+                renderer_perfcounters_t pcs;
+                renderer_get_perfcounters(rd, &pcs);
+
+                uint64_t pcf = renderer_get_perfcounter_frequency(rd);
+
+                auto to_us = [pcf](uint64_t pc)
+                {
+                    return pc * 1000000 / pcf;
+                };
+
+                if (ImGui::CollapsingHeader("Renderer", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    ImGui::Text("MVP transform: %u us", to_us(pcs.mvptransform));
+                }
+            }
+
+            // Rasterizer performance
+            {
+                framebuffer_perfcounters_t pcs;
+                framebuffer_get_perfcounters(fb, &pcs);
+
+                std::vector<tile_perfcounters_t> tile_pcs(framebuffer_get_total_num_tiles(fb));
+                framebuffer_get_tile_perfcounters(fb, tile_pcs.data());
+
+                uint64_t pcf = framebuffer_get_perfcounter_frequency(fb);
+
+                auto to_us = [pcf](uint64_t pc)
+                {
+                    return pc * 1000000 / pcf;
+                };
+
+                if (ImGui::CollapsingHeader("Setup counters", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    ImGui::Text("Clipping: %u us", to_us(pcs.clipping));
+                    ImGui::Text("Common setup: %u us", to_us(pcs.common_setup));
+                    ImGui::Text("Small tri setup: %u us", to_us(pcs.smalltri_setup));
+                    ImGui::Text("Large tri setup: %u us", to_us(pcs.largetri_setup));
+                }
+
+                if (ImGui::CollapsingHeader("Summed per-tile counters", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    tile_perfcounters_t summed_tpcs;
+                    memset(&summed_tpcs, 0, sizeof(tile_perfcounters_t));
+                    for (const tile_perfcounters_t& tpcs : tile_pcs)
+                    {
+                        const uint64_t* src_u64 = (const uint64_t*)&tpcs;
+                        uint64_t* dst_u64 = (uint64_t*)&summed_tpcs;
+                        for (uint32_t i = 0; i < sizeof(tile_perfcounters_t) / sizeof(uint64_t); i++)
+                        {
+                            dst_u64[i] += src_u64[i];
+                        }
+                    }
+
+                    ImGui::Text("Small tri tile Raster: %u us", to_us(summed_tpcs.smalltri_tile_raster));
+                    ImGui::Text("Small tri coarse Raster: %u us", to_us(summed_tpcs.smalltri_coarse_raster));
+                    ImGui::Text("Large tri tile Raster: %u us", to_us(summed_tpcs.largetri_tile_raster));
+                    ImGui::Text("Large tri coarse Raster: %u us", to_us(summed_tpcs.largetri_coarse_raster));
+                    ImGui::Text("Command buffer push: %u us", to_us(summed_tpcs.cmdbuf_pushcmd));
+                    ImGui::Text("Command buffer resolve: %u us", to_us(summed_tpcs.cmdbuf_resolve));
+                    ImGui::Text("Clear: %u us", to_us(summed_tpcs.clear));
+                }
+
+                if (ImGui::CollapsingHeader("Specific per-tile counters", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    POINT cursorpos;
+                    if (GetCursorPos(&cursorpos) && ScreenToClient(g_hWnd, &cursorpos))
+                    {
+                        if (cursorpos.x >= 0 && cursorpos.x < fbwidth &&
+                            cursorpos.y >= 0 && cursorpos.y < fbheight)
+                        {
+                            int tile_y = cursorpos.y / 128;
+                            int tile_x = cursorpos.x / 128;
+                            int width_in_tiles = (fbwidth + 127) / 128;
+                            int tile_i = tile_y * width_in_tiles + tile_x;
+
+                            tile_perfcounters_t tpcs = tile_pcs[tile_i];
+
+                            ImGui::Text("Tile %d perfcounters:", tile_i);
+
+                            ImGui::Text("Small tri tile Raster: %u us", to_us(tpcs.smalltri_tile_raster));
+                            ImGui::Text("Small tri coarse Raster: %u us", to_us(tpcs.smalltri_coarse_raster));
+                            ImGui::Text("Large tri tile Raster: %u us", to_us(tpcs.largetri_tile_raster));
+                            ImGui::Text("Large tri coarse Raster: %u us", to_us(tpcs.largetri_coarse_raster));
+                            ImGui::Text("Command buffer push: %u us", to_us(tpcs.cmdbuf_pushcmd));
+                            ImGui::Text("Command buffer resolve: %u us", to_us(tpcs.cmdbuf_resolve));
+                            ImGui::Text("Clear: %u us", to_us(tpcs.clear));
+                        }
+                    }
+                }
+            }
         }
         ImGui::End();
 
