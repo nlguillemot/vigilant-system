@@ -272,6 +272,7 @@ typedef struct tilecmd_drawsmalltri_t
     int32_t edge_dxs[3];
     int32_t edge_dys[3];
     int32_t vert_Zs[3];
+    int32_t max_Z, min_Z;
     uint32_t rcp_triarea2;
     int32_t first_coarse_x, last_coarse_x;
     int32_t first_coarse_y, last_coarse_y;
@@ -404,9 +405,6 @@ void delete_framebuffer(framebuffer_t* fb)
     free(fb);
 }
 
-// hack
-static uint32_t g_Color = 0xFFFF00FF;
-
 static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32_t coarse_topleft_x, int32_t coarse_topleft_y, const tilecmd_drawsmalltri_t* drawcmd)
 {
     uint64_t coarse_start_pc = qpc();
@@ -473,14 +471,17 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
                 }
 
                 // compute non-perspective-correct barycentrics for vertices 1 and 2
-                // uint32_t u = ((-edges_row[2]) * (drawcmd->rcp_triarea2)) >> 8;
-                // uint32_t v = ((-edges_row[0]) * (drawcmd->rcp_triarea2)) >> 8;
                 uint32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 8;
                 uint32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 8;
-                if (u >= 256)
-                    u = 255;
-                if (v >= 256)
-                    v = 255;
+                if (u >= 0x100)
+                    u = 0xFF;
+                if (v >= 0x100)
+                    v = 0xFF;
+                
+                // not related to vertex w. Just third barycentric. Bad naming.
+                uint32_t w = 0xFF - u - v;
+                if (w >= 0x100)
+                    w = 0;
 
                 // compute interpolated depth
                 // TODO? Might want to saturate here.
@@ -488,13 +489,17 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
                     + u * (drawcmd->vert_Zs[1] - drawcmd->vert_Zs[0])
                     + v * (drawcmd->vert_Zs[2] - drawcmd->vert_Zs[0]);
 
+                if (pixel_Z < drawcmd->min_Z)
+                    pixel_Z = drawcmd->min_Z;
+                
+                if (pixel_Z > drawcmd->max_Z)
+                    pixel_Z = drawcmd->max_Z;
+
                 if (pixel_Z < fb->depthbuffer[dst_i])
                 {
                     fb->depthbuffer[dst_i] = pixel_Z;
 
-                    fb->backbuffer[dst_i] = (0xFF << 24) | ((255 - u - v) << 16) | (u << 8) | v;
-                    
-                    // fb->backbuffer[dst_i] = g_Color;
+                    fb->backbuffer[dst_i] = (0xFF << 24) | (w << 16) | (u << 8) | v;
                 }
             }
 
@@ -626,7 +631,7 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
 
             if (!pixel_discarded)
             {
-                fb->backbuffer[dst_i] = g_Color;
+                fb->backbuffer[dst_i] = 0xFFFF00FF;
             }
 
             for (int32_t v = 0; v < num_test_edges; v++)
@@ -1459,6 +1464,7 @@ commonsetup_end:
         
         // perform the reciprocal
         // important: this value is denormal, but the exponent is not updated to reflect that.
+        // there is an exception. when it's equal to 0x10000, the resulting masked value is 0x0000, but really means 0x10000
         // this is breaking the rules compared to ordinary floating point
         triarea2_mantissa = (0x10000 + (triarea2_mantissa / 2)) / triarea2_mantissa;
         assert(triarea2_mantissa != 0);
@@ -1497,6 +1503,16 @@ commonsetup_end:
 
             // truncate (don't worry, this works out because the top-left rule works as a rounding mode)
             edges[v] = edges[v] >> 8;
+        }
+
+        drawsmalltricmd.min_Z = verts[0].z;
+        drawsmalltricmd.max_Z = verts[0].z;
+        for (int32_t v = 1; v < 3; v++)
+        {
+            if (verts[v].z < drawsmalltricmd.min_Z)
+                drawsmalltricmd.min_Z = verts[v].z;
+            if (verts[v].z > drawsmalltricmd.max_Z)
+                drawsmalltricmd.max_Z = verts[v].z;
         }
 
         for (int32_t v = 0; v < 3; v++)
@@ -1940,11 +1956,6 @@ void framebuffer_get_tile_perfcounters(framebuffer_t* fb, tile_perfcounters_t ti
     {
         tile_pcs[i] = fb->tile_perfcounters[i];
     }
-}
-
-void rasterizer_set_color(uint32_t col)
-{
-    g_Color = col;
 }
 
 #ifdef RASTERIZER_UNIT_TESTS

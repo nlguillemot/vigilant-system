@@ -548,20 +548,6 @@ int main()
             }
         }
 
-        if (show_tiles || show_coarse_blocks || show_fine_blocks)
-        {
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glUseProgram(gridsp);
-            glUniform1i(0, show_tiles);
-            glUniform1i(1, show_coarse_blocks);
-            glUniform1i(2, show_fine_blocks);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-            glUseProgram(0);
-            glBlendFunc(GL_ONE, GL_ZERO);
-            glDisable(GL_BLEND);
-        }
-
         if (show_perfheatmap)
         {
             std::vector<tile_perfcounters_t> tile_pcs(framebuffer_get_total_num_tiles(fb));
@@ -609,6 +595,20 @@ int main()
                     glEnd();
                 }
             }
+            glBlendFunc(GL_ONE, GL_ZERO);
+            glDisable(GL_BLEND);
+        }
+
+        if (show_tiles || show_coarse_blocks || show_fine_blocks)
+        {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glUseProgram(gridsp);
+            glUniform1i(0, show_tiles);
+            glUniform1i(1, show_coarse_blocks);
+            glUniform1i(2, show_fine_blocks);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glUseProgram(0);
             glBlendFunc(GL_ONE, GL_ZERO);
             glDisable(GL_BLEND);
         }

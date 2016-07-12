@@ -77,9 +77,6 @@ RASTERIZER_API void framebuffer_reset_perfcounters(framebuffer_t* fb);
 RASTERIZER_API void framebuffer_get_perfcounters(framebuffer_t* fb, framebuffer_perfcounters_t* pcs);
 RASTERIZER_API void framebuffer_get_tile_perfcounters(framebuffer_t* fb, tile_perfcounters_t tile_pcs[]); // grabs perfcounters for ALL tiles
 
-// Just a hack
-RASTERIZER_API void rasterizer_set_color(uint32_t col);
-
 #ifdef __cplusplus
 } // end extern "C"
 #endif
