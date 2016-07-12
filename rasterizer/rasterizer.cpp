@@ -14,7 +14,7 @@
 #include <assert.h>
 #include <stdio.h>
 
-#ifdef __AVX2__
+#ifdef _MSC_VER
 #include <intrin.h>
 #endif
 
@@ -59,14 +59,13 @@ void run_rasterizer_unit_tests();
 #ifdef __AVX2__
 __forceinline uint32_t pdep_u32(uint32_t source, uint32_t mask)
 {
+    // AVX2 implementation
     return _pdep_u32(source, mask);
 }
 #else
 __forceinline uint32_t pdep_u32(uint32_t source, uint32_t mask)
 {
-    // horribly inefficient, but that's life without AVX2.
-    // however, typically not a problem since you only need to swizzle once up front.
-    // Implementation based on the pseudocode in http://www.felixcloutier.com/x86/PDEP.html
+    // generic implementation
     uint32_t temp = source;
     uint32_t dest = 0;
     uint32_t m = 0, k = 0;
@@ -80,6 +79,43 @@ __forceinline uint32_t pdep_u32(uint32_t source, uint32_t mask)
         m = m+ 1;
     }
     return dest;
+}
+#endif
+
+// count leading zeros
+#ifdef __AVX2__
+__forceinline uint32_t lzcnt(uint32_t value)
+{
+    // AVX2 implementation
+    return __lzcnt(value);
+}
+#elif defined(_MSC_VER)
+__forceinline uint32_t lzcnt(uint32_t value)
+{
+    // MSVC implementation
+    unsigned long index;
+    if (_BitScanReverse(&index, value))
+    {
+        return (32 - 1) - index;
+    }
+    else
+    {
+        return 32;
+    }
+}
+#else
+__forceinline uint32_t lzcnt(uint32_t value)
+{
+    // generic implementation
+    int32_t i;
+    for (i = 0; i < 32; i++)
+    {
+        if (value & 0x80000000)
+            break;
+        
+        value = value << 1;
+    }
+    return i;
 }
 #endif
 
@@ -207,6 +243,8 @@ typedef struct tilecmd_drawsmalltri_t
     int32_t edges[3];
     int32_t edge_dxs[3];
     int32_t edge_dys[3];
+    int32_t vert_Zs[3];
+    uint32_t rcp_triarea2;
     int32_t first_coarse_x, last_coarse_x;
     int32_t first_coarse_y, last_coarse_y;
 } tilecmd_drawsmalltri_t;
@@ -368,17 +406,52 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
 
             if (!pixel_discarded)
             {
-                // fb->backbuffer[dst_i] = g_Color;
-                
-                fb->backbuffer[dst_i] = (fb->backbuffer[dst_i] & 0x00FFFFFF) + 100;
-                
-                // saturate
-                if (fb->backbuffer[dst_i] > 0x000000FF)
+                uint32_t rcp_triarea2_mantissa = (drawcmd->rcp_triarea2 & 0xFF);
+                uint32_t rcp_triarea2_exponent = (drawcmd->rcp_triarea2 & 0xFF00) >> 8;
+                int32_t rcp_triarea2_rshift = (int32_t)(rcp_triarea2_exponent - 127);
+
+                if (rcp_triarea2_mantissa == 0)
                 {
-                    fb->backbuffer[dst_i] = 0x000000FF;
+                    rcp_triarea2_mantissa = 0x100;
                 }
 
-                fb->backbuffer[dst_i] |= 0xFF000000;
+                int32_t shifted_e2 = -edges_row[2];
+                int32_t shifted_e0 = -edges_row[0];
+                if (rcp_triarea2_rshift < 0)
+                {
+                    shifted_e2 = shifted_e2 << -rcp_triarea2_rshift;
+                    shifted_e0 = shifted_e0 << -rcp_triarea2_rshift;
+                }
+                else
+                {
+                    shifted_e2 = shifted_e2 >> rcp_triarea2_rshift;
+                    shifted_e0 = shifted_e0 >> rcp_triarea2_rshift;
+                }
+
+                // compute non-perspective-correct barycentrics for vertices 1 and 2
+                // uint32_t u = ((-edges_row[2]) * (drawcmd->rcp_triarea2)) >> 8;
+                // uint32_t v = ((-edges_row[0]) * (drawcmd->rcp_triarea2)) >> 8;
+                uint32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 8;
+                uint32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 8;
+                if (u >= 256)
+                    u = 255;
+                if (v >= 256)
+                    v = 255;
+
+                // compute interpolated depth
+                // TODO? Might want to saturate here.
+                uint32_t pixel_Z = (drawcmd->vert_Zs[0] << 8)
+                    + u * (drawcmd->vert_Zs[1] - drawcmd->vert_Zs[0])
+                    + v * (drawcmd->vert_Zs[2] - drawcmd->vert_Zs[0]);
+
+                if (pixel_Z < fb->depthbuffer[dst_i])
+                {
+                    fb->depthbuffer[dst_i] = pixel_Z;
+
+                    fb->backbuffer[dst_i] = (0xFF << 24) | ((255 - u - v) << 16) | (u << 8) | v;
+                    
+                    // fb->backbuffer[dst_i] = g_Color;
+                }
             }
 
             for (int32_t v = 0; v < 3; v++)
@@ -648,6 +721,7 @@ static void clear_tile(framebuffer_t* fb, int32_t tile_id, tilecmd_cleartile_t* 
     for (int32_t px = tile_start_i; px < tile_end_i; px++)
     {
         fb->backbuffer[px] = color;
+        fb->depthbuffer[px] = 0xFFFFFFFF;
     }
 }
 
@@ -839,7 +913,7 @@ void framebuffer_resolve(framebuffer_t* fb)
     }
 }
 
-void framebuffer_pack_row_major(framebuffer_t* fb, int32_t x, int32_t y, int32_t width, int32_t height, pixelformat_t format, void* data)
+void framebuffer_pack_row_major(framebuffer_t* fb, attachment_t attachment, int32_t x, int32_t y, int32_t width, int32_t height, pixelformat_t format, void* data)
 {
     assert(fb);
     assert(x >= 0 && x < fb->width_in_pixels);
@@ -884,26 +958,42 @@ void framebuffer_pack_row_major(framebuffer_t* fb, int32_t x, int32_t y, int32_t
                     int32_t dst_i = rel_pixel_y * width + rel_pixel_x;
 
                     int32_t src_i = curr_tile_start + (pixel_y_bits | pixel_x_bits);
-                    int32_t src = fb->backbuffer[src_i];
-                    if (format == pixelformat_r8g8b8a8_unorm)
+                    if (attachment == attachment_color0)
                     {
-                        uint8_t* dst = (uint8_t*)data + dst_i * 4;
-                        dst[0] = (uint8_t)((src & 0x00FF0000) >> 16);
-                        dst[1] = (uint8_t)((src & 0x0000FF00) >> 8);
-                        dst[2] = (uint8_t)((src & 0x000000FF) >> 0);
-                        dst[3] = (uint8_t)((src & 0xFF000000) >> 24);
+                        uint32_t src = fb->backbuffer[src_i];
+                        if (format == pixelformat_r8g8b8a8_unorm)
+                        {
+                            uint8_t* dst = (uint8_t*)data + dst_i * 4;
+                            dst[0] = (uint8_t)((src & 0x00FF0000) >> 16);
+                            dst[1] = (uint8_t)((src & 0x0000FF00) >> 8);
+                            dst[2] = (uint8_t)((src & 0x000000FF) >> 0);
+                            dst[3] = (uint8_t)((src & 0xFF000000) >> 24);
+                        }
+                        else if (format == pixelformat_b8g8r8a8_unorm)
+                        {
+                            uint8_t* dst = (uint8_t*)data + dst_i * 4;
+                            dst[0] = (uint8_t)((src & 0x000000FF) >> 0);
+                            dst[1] = (uint8_t)((src & 0x0000FF00) >> 8);
+                            dst[2] = (uint8_t)((src & 0x00FF0000) >> 16);
+                            dst[3] = (uint8_t)((src & 0xFF000000) >> 24);
+                        }
+                        else
+                        {
+                            assert(!"Unknown color pixel format");
+                        }
                     }
-                    else if (format == pixelformat_b8g8r8a8_unorm)
+                    else if (attachment == attachment_depth)
                     {
-                        uint8_t* dst = (uint8_t*)data + dst_i * 4;
-                        dst[0] = (uint8_t)((src & 0x000000FF) >> 0);
-                        dst[1] = (uint8_t)((src & 0x0000FF00) >> 8);
-                        dst[2] = (uint8_t)((src & 0x00FF0000) >> 16);
-                        dst[3] = (uint8_t)((src & 0xFF000000) >> 24);
-                    }
-                    else
-                    {
-                        assert(!"Unknown pixel format");
+                        uint32_t src = fb->depthbuffer[src_i];
+                        if (format == pixelformat_r32_unorm)
+                        {
+                            uint32_t* dst = (uint32_t*)data + dst_i;
+                            *dst = src;
+                        }
+                        else
+                        {
+                            assert(!"Unknown depth pixel format");
+                        }
                     }
                 }
             }
@@ -931,89 +1021,179 @@ static void rasterize_triangle(
     framebuffer_t* fb,
     xyzw_i32_t clipVerts[3])
 {
-    // check which vertices are behind (or on) the near plane
-    int32_t vert_near_clipped[3];
-    vert_near_clipped[0] = clipVerts[0].z < 0;
-    vert_near_clipped[1] = clipVerts[1].z < 0;
-    vert_near_clipped[2] = clipVerts[2].z < 0;
-    
-    int32_t num_near_clipped = vert_near_clipped[0] + vert_near_clipped[1] + vert_near_clipped[2];
-    
-    if (num_near_clipped == 3)
+    // perform near plane clipping
     {
-        // clip triangles with 3 vertices behind the near plane
-        return;
+        // check which vertices are behind the near plane
+        int32_t vert_near_clipped[3];
+        vert_near_clipped[0] = clipVerts[0].z < 0;
+        vert_near_clipped[1] = clipVerts[1].z < 0;
+        vert_near_clipped[2] = clipVerts[2].z < 0;
+
+        int32_t num_near_clipped = vert_near_clipped[0] + vert_near_clipped[1] + vert_near_clipped[2];
+
+        if (num_near_clipped == 3)
+        {
+            // clip whole triangles with 3 vertices behind the near plane
+            return;
+        }
+
+        if (num_near_clipped == 2)
+        {
+            // Two vertices behind the near plane. In this case, cut the associated edges short.
+            int32_t unclipped_vert = 0;
+            if (!vert_near_clipped[1]) unclipped_vert = 1;
+            else if (!vert_near_clipped[2]) unclipped_vert = 2;
+
+            int32_t v1 = (unclipped_vert + 1) % 3;
+            int32_t v2 = (unclipped_vert + 2) % 3;
+
+            // clip the first edge
+            int32_t a1 = s1516_div(clipVerts[unclipped_vert].z, clipVerts[unclipped_vert].z - clipVerts[v1].z);
+            int32_t one_minus_a1 = s1516_int(1) - a1;
+            clipVerts[v1].x = s1516_mul(one_minus_a1, clipVerts[unclipped_vert].x) + s1516_mul(a1, clipVerts[v1].x);
+            clipVerts[v1].y = s1516_mul(one_minus_a1, clipVerts[unclipped_vert].y) + s1516_mul(a1, clipVerts[v1].y);
+            clipVerts[v1].z = 0;
+            clipVerts[v1].w = s1516_mul(one_minus_a1, clipVerts[unclipped_vert].w) + s1516_mul(a1, clipVerts[v1].w);
+            assert(clipVerts[v1].w != 0);
+
+            // clip the second edge
+            int32_t a2 = s1516_div(clipVerts[unclipped_vert].z, clipVerts[unclipped_vert].z - clipVerts[v2].z);
+            int32_t one_minus_a2 = s1516_int(1) - a2;
+            clipVerts[v2].x = s1516_mul(one_minus_a2, clipVerts[unclipped_vert].x) + s1516_mul(a2, clipVerts[v2].x);
+            clipVerts[v2].y = s1516_mul(one_minus_a2, clipVerts[unclipped_vert].y) + s1516_mul(a2, clipVerts[v2].y);
+            clipVerts[v2].z = 0;
+            clipVerts[v2].w = s1516_mul(one_minus_a2, clipVerts[unclipped_vert].w) + s1516_mul(a2, clipVerts[v2].w);
+            assert(clipVerts[v2].w != 0);
+        }
+
+        if (num_near_clipped == 1)
+        {
+            // One vertex behind the near plane. In this case, triangulate the triangle into two triangles.
+            int32_t clipped_vert = 0;
+            if (vert_near_clipped[1]) clipped_vert = 1;
+            else if (vert_near_clipped[2]) clipped_vert = 2;
+
+            int32_t v1 = (clipped_vert + 1) % 3;
+            int32_t v2 = (clipped_vert + 2) % 3;
+
+            // clip the first edge
+            xyzw_i32_t clipped1;
+            int32_t a1 = s1516_div(clipVerts[clipped_vert].z, clipVerts[clipped_vert].z - clipVerts[v1].z);
+            int32_t one_minus_a1 = s1516_int(1) - a1;
+            clipped1.x = s1516_mul(one_minus_a1, clipVerts[clipped_vert].x) + s1516_mul(a1, clipVerts[v1].x);
+            clipped1.y = s1516_mul(one_minus_a1, clipVerts[clipped_vert].y) + s1516_mul(a1, clipVerts[v1].y);
+            clipped1.z = 0;
+            clipped1.w = s1516_mul(one_minus_a1, clipVerts[clipped_vert].w) + s1516_mul(a1, clipVerts[v1].w);
+            assert(clipped1.w != 0);
+
+            // clip the second edge
+            xyzw_i32_t clipped2;
+            int32_t a2 = s1516_div(clipVerts[clipped_vert].z, clipVerts[clipped_vert].z - clipVerts[v2].z);
+            int32_t one_minus_a2 = s1516_int(1) - a2;
+            clipped2.x = s1516_mul(one_minus_a2, clipVerts[clipped_vert].x) + s1516_mul(a2, clipVerts[v2].x);
+            clipped2.y = s1516_mul(one_minus_a2, clipVerts[clipped_vert].y) + s1516_mul(a2, clipVerts[v2].y);
+            clipped2.z = 0;
+            clipped2.w = s1516_mul(one_minus_a2, clipVerts[clipped_vert].w) + s1516_mul(a2, clipVerts[v2].w);
+            assert(clipped2.w != 0);
+
+            // output the first clipped triangle (note: recursive call)
+            xyzw_i32_t clipVerts1[3] = { clipVerts[0], clipVerts[1], clipVerts[2] };
+            clipVerts1[clipped_vert] = clipped1;
+            rasterize_triangle(fb, clipVerts1);
+
+            // set self up to output the second clipped triangle
+            clipVerts[clipped_vert] = clipped2;
+            clipVerts[v1] = clipped1;
+        }
     }
 
-    if (num_near_clipped == 2)
+    // perform far plane clipping
     {
-        // Two vertices behind the near plane. In this case, cut the associated edges short.
-        int32_t unclipped_vert = 0;
-        if (!vert_near_clipped[1]) unclipped_vert = 1;
-        else if (!vert_near_clipped[2]) unclipped_vert = 2;
+        // check which vertices are behind (or on) the far plane
+        int32_t vert_far_clipped[3];
+        vert_far_clipped[0] = clipVerts[0].z >= clipVerts[0].w;
+        vert_far_clipped[1] = clipVerts[1].z >= clipVerts[1].w;
+        vert_far_clipped[2] = clipVerts[2].z >= clipVerts[2].w;
 
-        int32_t v1 = (unclipped_vert + 1) % 3;
-        int32_t v2 = (unclipped_vert + 2) % 3;
+        int32_t num_far_clipped = vert_far_clipped[0] + vert_far_clipped[1] + vert_far_clipped[2];
 
-        // clip the first edge
-        int32_t a1 = s1516_div(clipVerts[unclipped_vert].z, clipVerts[unclipped_vert].z - clipVerts[v1].z);
-        int32_t one_minus_a1 = s1516_int(1) - a1;
-        clipVerts[v1].x = s1516_mul(one_minus_a1, clipVerts[unclipped_vert].x) + s1516_mul(a1, clipVerts[v1].x);
-        clipVerts[v1].y = s1516_mul(one_minus_a1, clipVerts[unclipped_vert].y) + s1516_mul(a1, clipVerts[v1].y);
-        clipVerts[v1].z = 0;
-        clipVerts[v1].w = s1516_mul(one_minus_a1, clipVerts[unclipped_vert].w) + s1516_mul(a1, clipVerts[v1].w);
-        assert(clipVerts[v1].w != 0);
+        if (num_far_clipped == 3)
+        {
+            // clip whole triangles with 3 vertices behind the far plane
+            return;
+        }
 
-        // clip the second edge
-        int32_t a2 = s1516_div(clipVerts[unclipped_vert].z, clipVerts[unclipped_vert].z - clipVerts[v2].z);
-        int32_t one_minus_a2 = s1516_int(1) - a2;
-        clipVerts[v2].x = s1516_mul(one_minus_a2, clipVerts[unclipped_vert].x) + s1516_mul(a2, clipVerts[v2].x);
-        clipVerts[v2].y = s1516_mul(one_minus_a2, clipVerts[unclipped_vert].y) + s1516_mul(a2, clipVerts[v2].y);
-        clipVerts[v2].z = 0;
-        clipVerts[v2].w = s1516_mul(one_minus_a2, clipVerts[unclipped_vert].w) + s1516_mul(a2, clipVerts[v2].w);
-        assert(clipVerts[v2].w != 0);
+        if (num_far_clipped == 2)
+        {
+            // Two vertices behind the far plane. In this case, cut the associated edges short.
+            int32_t unclipped_vert = 0;
+            if (!vert_far_clipped[1]) unclipped_vert = 1;
+            else if (!vert_far_clipped[2]) unclipped_vert = 2;
+
+            int32_t v1 = (unclipped_vert + 1) % 3;
+            int32_t v2 = (unclipped_vert + 2) % 3;
+
+            // clip the first edge
+            int32_t a1 = s1516_div(clipVerts[unclipped_vert].z - clipVerts[unclipped_vert].w, (clipVerts[unclipped_vert].z - clipVerts[unclipped_vert].w) - (clipVerts[v1].z - clipVerts[v1].w));
+            int32_t one_minus_a1 = s1516_int(1) - a1;
+            clipVerts[v1].x = s1516_mul(one_minus_a1, clipVerts[unclipped_vert].x) + s1516_mul(a1, clipVerts[v1].x);
+            clipVerts[v1].y = s1516_mul(one_minus_a1, clipVerts[unclipped_vert].y) + s1516_mul(a1, clipVerts[v1].y);
+            clipVerts[v1].w = s1516_mul(one_minus_a1, clipVerts[unclipped_vert].w) + s1516_mul(a1, clipVerts[v1].w);
+            clipVerts[v1].z = clipVerts[v1].w - 1;
+            assert(clipVerts[v1].w != 0);
+
+            // clip the second edge
+            int32_t a2 = s1516_div(clipVerts[unclipped_vert].z - clipVerts[unclipped_vert].w, (clipVerts[unclipped_vert].z - clipVerts[unclipped_vert].w) - (clipVerts[v2].z - clipVerts[v2].w));
+            int32_t one_minus_a2 = s1516_int(1) - a2;
+            clipVerts[v2].x = s1516_mul(one_minus_a2, clipVerts[unclipped_vert].x) + s1516_mul(a2, clipVerts[v2].x);
+            clipVerts[v2].y = s1516_mul(one_minus_a2, clipVerts[unclipped_vert].y) + s1516_mul(a2, clipVerts[v2].y);
+            clipVerts[v2].w = s1516_mul(one_minus_a2, clipVerts[unclipped_vert].w) + s1516_mul(a2, clipVerts[v2].w);
+            clipVerts[v2].z = clipVerts[v2].w - 1;
+            assert(clipVerts[v2].w != 0);
+        }
+
+        if (num_far_clipped == 1)
+        {
+            // One vertex behind the near plane. In this case, triangulate the triangle into two triangles.
+            int32_t clipped_vert = 0;
+            if (vert_far_clipped[1]) clipped_vert = 1;
+            else if (vert_far_clipped[2]) clipped_vert = 2;
+
+            int32_t v1 = (clipped_vert + 1) % 3;
+            int32_t v2 = (clipped_vert + 2) % 3;
+
+            // clip the first edge
+            xyzw_i32_t clipped1;
+            int32_t a1 = s1516_div(clipVerts[clipped_vert].z - clipVerts[clipped_vert].w, (clipVerts[clipped_vert].z - clipVerts[clipped_vert].w) - (clipVerts[v1].z - clipVerts[v1].w));
+            int32_t one_minus_a1 = s1516_int(1) - a1;
+            clipped1.x = s1516_mul(one_minus_a1, clipVerts[clipped_vert].x) + s1516_mul(a1, clipVerts[v1].x);
+            clipped1.y = s1516_mul(one_minus_a1, clipVerts[clipped_vert].y) + s1516_mul(a1, clipVerts[v1].y);
+            clipped1.w = s1516_mul(one_minus_a1, clipVerts[clipped_vert].w) + s1516_mul(a1, clipVerts[v1].w);
+            clipped1.z = clipped1.w - 1;
+            assert(clipped1.w != 0);
+
+            // clip the second edge
+            xyzw_i32_t clipped2;
+            int32_t a2 = s1516_div(clipVerts[clipped_vert].z - clipVerts[clipped_vert].w, (clipVerts[clipped_vert].z - clipVerts[clipped_vert].w) - (clipVerts[v2].z - clipVerts[v2].w));
+            int32_t one_minus_a2 = s1516_int(1) - a2;
+            clipped2.x = s1516_mul(one_minus_a2, clipVerts[clipped_vert].x) + s1516_mul(a2, clipVerts[v2].x);
+            clipped2.y = s1516_mul(one_minus_a2, clipVerts[clipped_vert].y) + s1516_mul(a2, clipVerts[v2].y);
+            clipped2.w = s1516_mul(one_minus_a2, clipVerts[clipped_vert].w) + s1516_mul(a2, clipVerts[v2].w);
+            clipped2.z = clipped2.w - 1;
+            assert(clipped2.w != 0);
+
+            // output the first clipped triangle (note: recursive call)
+            xyzw_i32_t clipVerts1[3] = { clipVerts[0], clipVerts[1], clipVerts[2] };
+            clipVerts1[clipped_vert] = clipped1;
+            rasterize_triangle(fb, clipVerts1);
+
+            // set self up to output the second clipped triangle
+            clipVerts[clipped_vert] = clipped2;
+            clipVerts[v1] = clipped1;
+        }
     }
 
-    if (num_near_clipped == 1)
-    {
-        // One vertex behind the near plane. In this case, triangulate the triangle into two triangles.
-        int32_t clipped_vert = 0;
-        if (vert_near_clipped[1]) clipped_vert = 1;
-        else if (vert_near_clipped[2]) clipped_vert = 2;
-
-        int32_t v1 = (clipped_vert + 1) % 3;
-        int32_t v2 = (clipped_vert + 2) % 3;
-
-        // clip the first edge
-        xyzw_i32_t clipped1;
-        int32_t a1 = s1516_div(clipVerts[clipped_vert].z, clipVerts[clipped_vert].z - clipVerts[v1].z);
-        int32_t one_minus_a1 = s1516_int(1) - a1;
-        clipped1.x = s1516_mul(one_minus_a1, clipVerts[clipped_vert].x) + s1516_mul(a1, clipVerts[v1].x);
-        clipped1.y = s1516_mul(one_minus_a1, clipVerts[clipped_vert].y) + s1516_mul(a1, clipVerts[v1].y);
-        clipped1.z = 0;
-        clipped1.w = s1516_mul(one_minus_a1, clipVerts[clipped_vert].w) + s1516_mul(a1, clipVerts[v1].w);
-        assert(clipped1.w != 0);
-
-        // clip the second edge
-        xyzw_i32_t clipped2;
-        int32_t a2 = s1516_div(clipVerts[clipped_vert].z, clipVerts[clipped_vert].z - clipVerts[v2].z);
-        int32_t one_minus_a2 = s1516_int(1) - a2;
-        clipped2.x = s1516_mul(one_minus_a2, clipVerts[clipped_vert].x) + s1516_mul(a2, clipVerts[v2].x);
-        clipped2.y = s1516_mul(one_minus_a2, clipVerts[clipped_vert].y) + s1516_mul(a2, clipVerts[v2].y);
-        clipped2.z = 0;
-        clipped2.w = s1516_mul(one_minus_a2, clipVerts[clipped_vert].w) + s1516_mul(a2, clipVerts[v2].w);
-        assert(clipped2.w != 0);
-
-        // output the first clipped triangle (note: recursive call)
-        xyzw_i32_t clipVerts1[3] = { clipVerts[0], clipVerts[1], clipVerts[2] };
-        clipVerts1[clipped_vert] = clipped1;
-        rasterize_triangle(fb, clipVerts1);
-
-        // set self up to output the second clipped triangle
-        clipVerts[clipped_vert] = clipped2;
-        clipVerts[v1] = clipped1;
-    }
-
+    // transform vertices from clip space to window coordinates
     xyzw_i32_t verts[3];
     int32_t rcp_ws[3];
     for (int32_t v = 0; v < 3; v++)
@@ -1028,6 +1208,7 @@ static void rasterize_triangle(
         // TODO: clip things that all outside the guard band
 
         verts[v].z = s1516_mul(clipVerts[v].z, one_over_w);
+
         verts[v].w = clipVerts[v].w;
         rcp_ws[v] = one_over_w;
     }
@@ -1105,18 +1286,45 @@ static void rasterize_triangle(
             verts[v].y -= last_tile_px_y;
         }
 
-        int32_t triarea2 = (verts[1].x - verts[0].x) * (verts[2].y - verts[0].y) - (verts[1].y - verts[0].y) * (verts[2].x - verts[0].x);
+        int32_t triarea2 = ((verts[1].x - verts[0].x) * (verts[2].y - verts[0].y) - (verts[1].y - verts[0].y) * (verts[2].x - verts[0].x)) >> 8;
         
-        // assert that nothing important is truncated
-        assert((int64_t)triarea2 == ((int64_t)verts[1].x - verts[0].x) * (verts[2].y - verts[0].y) - ((int64_t)verts[1].y - verts[0].y) * (verts[2].x - verts[0].x));
-        
-        if (triarea2 <= 0)
+        if (triarea2 == 0)
         {
             goto skiptri;
         }
 
-        int32_t rcp_triarea2 = s1516_div(s1516_int(1), triarea2);
-        assert(rcp_triarea2 != 0);
+        if (triarea2 < 0)
+        {
+            xyzw_i32_t tmp = verts[1];
+            verts[1] = verts[2];
+            verts[2] = tmp;
+            triarea2 = -triarea2;
+
+            int32_t tmp_rcp_w = rcp_ws[1];
+            rcp_ws[1] = rcp_ws[2];
+            rcp_ws[2] = tmp_rcp_w;
+        }
+
+        // compute 1/(2triarea) and convert to a pseudo 8.8 floating point value
+        int32_t triarea2_lzcnt = lzcnt(triarea2);
+        int32_t triarea2_mantissa_rshift = (31 - 8) - triarea2_lzcnt;
+        uint32_t triarea2_mantissa = triarea2;
+        if (triarea2_mantissa_rshift < 0)
+            triarea2_mantissa = triarea2_mantissa << -triarea2_mantissa_rshift;
+        else
+            triarea2_mantissa = triarea2_mantissa >> triarea2_mantissa_rshift;
+        
+        // perform the reciprocal
+        // important: this value is denormal, but the exponent is not updated to reflect that.
+        // this is breaking the rules compared to ordinary floating point
+        triarea2_mantissa = (0x10000 + (triarea2_mantissa / 2)) / triarea2_mantissa;
+        assert(triarea2_mantissa != 0);
+
+        triarea2_mantissa = triarea2_mantissa & 0xFF;
+        uint32_t triarea2_exponent = 127 + triarea2_mantissa_rshift;
+        uint32_t rcp_triarea2 = (triarea2_exponent << 8) | triarea2_mantissa;
+
+        drawsmalltricmd.rcp_triarea2 = rcp_triarea2;
 
         // compute edge equations with reduced precision thanks to being localized to the tiles
 
@@ -1152,6 +1360,7 @@ static void rasterize_triangle(
         {
             drawsmalltricmd.edge_dxs[v] = edge_dxs[v];
             drawsmalltricmd.edge_dys[v] = edge_dys[v];
+            drawsmalltricmd.vert_Zs[v] = verts[v].z;
         }
 
         // draw top left tile
@@ -1305,9 +1514,18 @@ static void rasterize_triangle(
         // The tens of thousands of pixels that large triangles generate outweigh the cost of slightly more expensive setup.
 
         int64_t triarea2 = ((int64_t)verts[1].x - verts[0].x) * ((int64_t)verts[2].y - verts[0].y) - ((int64_t)verts[1].y - verts[0].y) * ((int64_t)verts[2].x - verts[0].x);
-        if (triarea2 <= 0)
+        
+        if (triarea2 == 0)
         {
             goto skiptri;
+        }
+
+        if (triarea2 < 0)
+        {
+            xyzw_i32_t tmp = verts[1];
+            verts[1] = verts[2];
+            verts[2] = tmp;
+            triarea2 = -triarea2;
         }
 
         // pre-multiply by the base

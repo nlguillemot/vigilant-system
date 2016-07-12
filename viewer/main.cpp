@@ -57,7 +57,7 @@ void init_window(int32_t width, int32_t height)
     wc.lpszClassName = TEXT("WindowClass");
     RegisterClassEx(&wc);
 
-    DWORD dwStyle = WS_OVERLAPPEDWINDOW & ~(WS_MAXIMIZEBOX);
+    DWORD dwStyle = WS_OVERLAPPEDWINDOW & ~(WS_MAXIMIZEBOX | WS_THICKFRAME);
     RECT wr = { 0, 0, width, height };
     AdjustWindowRect(&wr, dwStyle, FALSE);
     g_hWnd = CreateWindowEx(
@@ -84,7 +84,7 @@ void init_window(int32_t width, int32_t height)
     HGLRC hGLRC = wglCreateContext(hDC);
     wglMakeCurrent(hDC, hGLRC);
 
-	LoadGLProcs();
+    LoadGLProcs();
 
     ShowWindow(g_hWnd, SW_SHOWNORMAL);
 
@@ -204,12 +204,12 @@ __forceinline uint32_t pdep_u32(uint32_t source, uint32_t mask)
 const char* g_GridVS = R"GLSL(#version 150
 void main()
 {
-	if (gl_VertexID == 0)
-		gl_Position = vec4(-1,-1,0,1);
-	else if (gl_VertexID == 1)
-		gl_Position = vec4(3,-1,0,1);
-	else if (gl_VertexID == 2)
-		gl_Position = vec4(-1,3,0,1);
+    if (gl_VertexID == 0)
+        gl_Position = vec4(-1,-1,0,1);
+    else if (gl_VertexID == 1)
+        gl_Position = vec4(3,-1,0,1);
+    else if (gl_VertexID == 2)
+        gl_Position = vec4(-1,3,0,1);
 }
 )GLSL";
 
@@ -219,15 +219,15 @@ layout(location = 0) uniform int show_tiles;
 layout(location = 1) uniform int show_coarse;
 layout(location = 2) uniform int show_fine;
 void main() {
-	uvec2 pos = uvec2(gl_FragCoord.xy);
-	if (((pos.x & 0x7F) == 0 || (pos.y & 0x7F) == 0) && show_tiles != 0)
-		gl_FragColor = vec4(1,1,1,0.5);
-	else if (((pos.x & 0xF) == 0 || (pos.y & 0xF) == 0) && show_coarse != 0)
- 		gl_FragColor = vec4(1,0.7,0.7,0.5);
-	else if (((pos.x & 0x3) == 0 || (pos.y & 0x3) == 0) && show_fine != 0)
- 		gl_FragColor = vec4(0.7,1.0,0.7,0.5);
- 	else
- 		discard;
+    uvec2 pos = uvec2(gl_FragCoord.xy);
+    if (((pos.x & 0x7F) == 0 || (pos.y & 0x7F) == 0) && show_tiles != 0)
+        gl_FragColor = vec4(1,1,1,0.5);
+    else if (((pos.x & 0xF) == 0 || (pos.y & 0xF) == 0) && show_coarse != 0)
+         gl_FragColor = vec4(1,0.7,0.7,0.5);
+    else if (((pos.x & 0x3) == 0 || (pos.y & 0x3) == 0) && show_fine != 0)
+         gl_FragColor = vec4(0.7,1.0,0.7,0.5);
+     else
+         discard;
 }
 )GLSL";
 
@@ -240,58 +240,58 @@ int main()
     SetProcessDPIAware();
     init_window(fbwidth, fbheight);
 
-	GLuint gridsp;
-	{
-		GLint status;
+    GLuint gridsp;
+    {
+        GLint status;
 
-		GLuint gridvs = glCreateShader(GL_VERTEX_SHADER);
-		glShaderSource(gridvs, 1, &g_GridVS, NULL);
-		glCompileShader(gridvs);
-		glGetShaderiv(gridvs, GL_COMPILE_STATUS, &status);
-		assert(status);
+        GLuint gridvs = glCreateShader(GL_VERTEX_SHADER);
+        glShaderSource(gridvs, 1, &g_GridVS, NULL);
+        glCompileShader(gridvs);
+        glGetShaderiv(gridvs, GL_COMPILE_STATUS, &status);
+        assert(status);
 
-		GLuint gridfs = glCreateShader(GL_FRAGMENT_SHADER);
-		glShaderSource(gridfs, 1, &g_GridFS, NULL);
-		glCompileShader(gridfs);
-		glGetShaderiv(gridfs, GL_COMPILE_STATUS, &status);
-		assert(status);
+        GLuint gridfs = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(gridfs, 1, &g_GridFS, NULL);
+        glCompileShader(gridfs);
+        glGetShaderiv(gridfs, GL_COMPILE_STATUS, &status);
+        assert(status);
 
-		gridsp = glCreateProgram();
-		glAttachShader(gridsp, gridvs);
-		glAttachShader(gridsp, gridfs);
-		glLinkProgram(gridsp);
-		glGetProgramiv(gridsp, GL_LINK_STATUS, &status);
-		assert(status);
-	}
+        gridsp = glCreateProgram();
+        glAttachShader(gridsp, gridvs);
+        glAttachShader(gridsp, gridfs);
+        glLinkProgram(gridsp);
+        glGetProgramiv(gridsp, GL_LINK_STATUS, &status);
+        assert(status);
+    }
 
     renderer_t* rd = new_renderer(fbwidth, fbheight);
 
-	const char* all_model_names[] = {
-		"cube",
+    const char* all_model_names[] = {
+        "cube",
         "teapot",
-		"gourd",
+        "gourd",
         "dragon",
         "buddha"
-	};
+    };
 
-	static const size_t num_models = sizeof(all_model_names) / sizeof(*all_model_names);
+    static const size_t num_models = sizeof(all_model_names) / sizeof(*all_model_names);
 
-	uint32_t loaded_model_first_ids[num_models];
-	uint32_t loaded_model_num_ids[num_models];
-	for (size_t i = 0; i < num_models; i++)
-	{
-		loaded_model_first_ids[i] = -1;
-	}
+    uint32_t loaded_model_first_ids[num_models];
+    uint32_t loaded_model_num_ids[num_models];
+    for (size_t i = 0; i < num_models; i++)
+    {
+        loaded_model_first_ids[i] = -1;
+    }
 
-	std::vector<uint32_t> curr_instances;
+    std::vector<uint32_t> curr_instances;
 
-	int32_t curr_model_index = 0;
+    int32_t curr_model_index = 0;
 
     scene_t* sc = new_scene();
 
     // compute projection matrix with DirectXMath because lazy
     {
-        DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(70.0f), (float)fbwidth / fbheight, 0.01f, 10.0f);
+        DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(70.0f), (float)fbwidth / fbheight, 0.5f, 10.0f);
         DirectX::XMFLOAT4X4 proj4x4;
         DirectX::XMStoreFloat4x4(&proj4x4, proj);
 
@@ -319,6 +319,8 @@ int main()
     bool show_coarse_blocks = false;
     bool show_fine_blocks = false;
 
+    bool show_depth = false;
+
     uint8_t* rgba8_pixels = (uint8_t*)malloc(fbwidth * fbheight * 4);
     assert(rgba8_pixels);
 
@@ -336,19 +338,20 @@ int main()
 
         ImGui_ImplWin32GL_NewFrame();
         
-		bool switched_model = false;
+        bool switched_model = false;
 
         bool requested_screenshot = false;
         std::string screenshot_filename;
 
-		switched_model |= loaded_model_first_ids[curr_model_index] == -1;
+        switched_model |= loaded_model_first_ids[curr_model_index] == -1;
 
-		ImGui::SetNextWindowSize(ImVec2(400, 250));
+        ImGui::SetNextWindowSize(ImVec2(400, 250));
         if (ImGui::Begin("Toolbox"))
         {
             ImGui::Checkbox("Show tiles", &show_tiles);
             ImGui::Checkbox("Show coarse blocks", &show_coarse_blocks);
             ImGui::Checkbox("Show fine blocks", &show_fine_blocks);
+            ImGui::Checkbox("Show depth", &show_depth);
 
             if (ImGui::Button("Save camera"))
             {
@@ -393,35 +396,35 @@ int main()
                 }
             }
 
-			if (ImGui::ListBox("Model selection", &curr_model_index, all_model_names, num_models))
-			{
-				switched_model = true;
-			}
+            if (ImGui::ListBox("Model selection", &curr_model_index, all_model_names, num_models))
+            {
+                switched_model = true;
+            }
         }
-		ImGui::End();
+        ImGui::End();
 
-		if (switched_model)
-		{
-			for (uint32_t instance_id : curr_instances)
-			{
-				scene_remove_instance(sc, instance_id);
-			}
-			curr_instances.clear();
+        if (switched_model)
+        {
+            for (uint32_t instance_id : curr_instances)
+            {
+                scene_remove_instance(sc, instance_id);
+            }
+            curr_instances.clear();
 
-			if (loaded_model_first_ids[curr_model_index] == -1)
-			{
-				std::string filename = std::string("assets/") + all_model_names[curr_model_index] + "/" + all_model_names[curr_model_index] + ".obj";
-				std::string mtl_basepath = std::string("assets/") + all_model_names[curr_model_index] + "/";
-				scene_add_models(sc, filename.c_str(), mtl_basepath.c_str(), &loaded_model_first_ids[curr_model_index], &loaded_model_num_ids[curr_model_index]);
-			}
+            if (loaded_model_first_ids[curr_model_index] == -1)
+            {
+                std::string filename = std::string("assets/") + all_model_names[curr_model_index] + "/" + all_model_names[curr_model_index] + ".obj";
+                std::string mtl_basepath = std::string("assets/") + all_model_names[curr_model_index] + "/";
+                scene_add_models(sc, filename.c_str(), mtl_basepath.c_str(), &loaded_model_first_ids[curr_model_index], &loaded_model_num_ids[curr_model_index]);
+            }
 
-			for (uint32_t model_id = loaded_model_first_ids[curr_model_index]; model_id < loaded_model_first_ids[curr_model_index] + loaded_model_num_ids[curr_model_index]; model_id++)
-			{
-				uint32_t new_instance_id;
-				scene_add_instance(sc, model_id, &new_instance_id);
-				curr_instances.push_back(new_instance_id);
-			}
-		}
+            for (uint32_t model_id = loaded_model_first_ids[curr_model_index]; model_id < loaded_model_first_ids[curr_model_index] + loaded_model_num_ids[curr_model_index]; model_id++)
+            {
+                uint32_t new_instance_id;
+                scene_add_instance(sc, model_id, &new_instance_id);
+                curr_instances.push_back(new_instance_id);
+            }
+        }
 
         QueryPerformanceCounter(&now);
         float delta_time_sec = (float)(now.QuadPart - then.QuadPart) / freq.QuadPart;
@@ -465,7 +468,51 @@ int main()
         // render rasterization to screen
         {
             framebuffer_t* fb = renderer_get_framebuffer(rd);
-            framebuffer_pack_row_major(fb, 0, 0, fbwidth, fbheight, pixelformat_r8g8b8a8_unorm, rgba8_pixels);
+            if (show_depth)
+            {
+                framebuffer_pack_row_major(fb, attachment_depth, 0, 0, fbwidth, fbheight, pixelformat_r32_unorm, rgba8_pixels);
+            }
+            else
+            {
+                framebuffer_pack_row_major(fb, attachment_color0, 0, 0, fbwidth, fbheight, pixelformat_r8g8b8a8_unorm, rgba8_pixels);
+            }
+
+            if (show_depth)
+            {
+                // map depth values to a visually meaningful range while ignoring the background
+                uint32_t min_depth = -1, max_depth = -1;
+                for (int32_t i = 0; i < fbwidth * fbheight; i++)
+                {
+                    uint32_t src = *(uint32_t*)&rgba8_pixels[4 * i];
+                    if (src != -1)
+                    {
+                        if (min_depth == -1 || src < min_depth)
+                        {
+                            min_depth = src;
+                        }
+                        if (max_depth == -1 || src > max_depth)
+                        {
+                            max_depth = src;
+                        }
+                    }
+                }
+
+                uint32_t depth_range = max_depth - min_depth;
+                for (int32_t i = 0; i < fbwidth * fbheight; i++)
+                {
+                    uint32_t* dst = (uint32_t*)&rgba8_pixels[4 * i];
+                    uint32_t src = *dst;
+                    if (src == -1 || min_depth == -1)
+                    {
+                        *dst = 0xFF000000;
+                    }
+                    else
+                    {
+                        uint32_t d = (uint32_t)(255.0 * ((double)(src - min_depth) / depth_range));
+                        *dst = 0xFF000000 | (d << 16) | (d << 8) | d;
+                    }
+                }
+            }
             
             if (requested_screenshot)
             {
@@ -497,19 +544,19 @@ int main()
             }
         }
 
-		if (show_tiles || show_coarse_blocks || show_fine_blocks)
-		{
-			glEnable(GL_BLEND);
-			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-			glUseProgram(gridsp);
-			glUniform1i(0, show_tiles);
-			glUniform1i(1, show_coarse_blocks);
-			glUniform1i(2, show_fine_blocks);
-			glDrawArrays(GL_TRIANGLES, 0, 3);
-			glUseProgram(0);
-			glBlendFunc(GL_ONE, GL_ZERO);
-			glDisable(GL_BLEND);
-		}
+        if (show_tiles || show_coarse_blocks || show_fine_blocks)
+        {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glUseProgram(gridsp);
+            glUniform1i(0, show_tiles);
+            glUniform1i(1, show_coarse_blocks);
+            glUniform1i(2, show_fine_blocks);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glUseProgram(0);
+            glBlendFunc(GL_ONE, GL_ZERO);
+            glDisable(GL_BLEND);
+        }
 
         if (ImGui::Begin("Info"))
         {
@@ -531,15 +578,18 @@ int main()
                     swizzled |= pdep_u32(cursorpos.y, 0xAAAAAAAA & (128 * 128 - 1));
                     ImGui::Text("Swizzled pixel: %d + %d = %d", tile_start, swizzled, tile_start + swizzled);
 
-                    uint32_t dwCol = *(uint32_t*)&rgba8_pixels[(cursorpos.y * fbwidth + cursorpos.x) * 4];
-                    ImGui::Text("Pixel color: %08X", dwCol);
+                    uint8_t r = rgba8_pixels[(cursorpos.y * fbwidth + cursorpos.x) * 4 + 0];
+                    uint8_t g = rgba8_pixels[(cursorpos.y * fbwidth + cursorpos.x) * 4 + 1];
+                    uint8_t b = rgba8_pixels[(cursorpos.y * fbwidth + cursorpos.x) * 4 + 2];
+                    uint8_t a = rgba8_pixels[(cursorpos.y * fbwidth + cursorpos.x) * 4 + 3];
+                    ImGui::Text("Pixel color (ARGB): 0x%08X", (a << 24) | (r << 16) | (g << 8) | b);
                     ImGui::SameLine();
 
                     ImVec4 fCol;
-                    fCol.x = (float)((dwCol >> 0) & 0xFF) / 255.0f;
-                    fCol.y = (float)((dwCol >> 8) & 0xFF) / 255.0f;
-                    fCol.z = (float)((dwCol >> 16) & 0xFF) / 255.0f;
-                    fCol.w = (float)((dwCol >> 24) & 0xFF) / 255.0f;
+                    fCol.x = (float)(r / 255.0f);
+                    fCol.y = (float)(g / 255.0f);
+                    fCol.z = (float)(b / 255.0f);
+                    fCol.w = (float)(a / 255.0f);
                     ImGui::ColorButton(fCol, true);
                 }
             }
@@ -548,7 +598,7 @@ int main()
             LONGLONG raster_time_us = raster_time * 1000000 / freq.QuadPart;
             ImGui::Text("Raster time: %llu microseconds", raster_time_us);
         }
-		ImGui::End();
+        ImGui::End();
 
         ImGui::Render();
 

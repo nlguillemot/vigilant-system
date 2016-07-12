@@ -18,16 +18,23 @@ extern "C" {
 
 struct framebuffer_t;
 
+typedef enum attachment_t
+{
+    attachment_color0,
+    attachment_depth
+} attachment_t;
+
 typedef enum pixelformat_t
 {
     pixelformat_r8g8b8a8_unorm,
-    pixelformat_b8g8r8a8_unorm
+    pixelformat_b8g8r8a8_unorm,
+    pixelformat_r32_unorm
 } pixelformat_t;
 
 RASTERIZER_API framebuffer_t* new_framebuffer(int32_t width, int32_t height);
 RASTERIZER_API void delete_framebuffer(framebuffer_t* fb);
 RASTERIZER_API void framebuffer_resolve(framebuffer_t* fb);
-RASTERIZER_API void framebuffer_pack_row_major(framebuffer_t* fb, int32_t x, int32_t y, int32_t width, int32_t height, pixelformat_t format, void* data);
+RASTERIZER_API void framebuffer_pack_row_major(framebuffer_t* fb, attachment_t attachment, int32_t x, int32_t y, int32_t width, int32_t height, pixelformat_t format, void* data);
 RASTERIZER_API void framebuffer_clear(framebuffer_t* fb, uint32_t color);
 
 RASTERIZER_API void rasterizer_draw(
