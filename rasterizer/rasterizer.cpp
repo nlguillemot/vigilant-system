@@ -272,7 +272,7 @@ typedef struct tilecmd_drawsmalltri_t
     int32_t edge_dxs[3];
     int32_t edge_dys[3];
     int32_t vert_Zs[3];
-    int32_t max_Z, min_Z;
+    uint32_t max_Z, min_Z;
     uint32_t rcp_triarea2;
     int32_t first_coarse_x, last_coarse_x;
     int32_t first_coarse_y, last_coarse_y;
@@ -284,6 +284,7 @@ typedef struct tilecmd_drawtile_t
     int32_t edges[3];
     int32_t edge_dxs[3];
     int32_t edge_dys[3];
+    uint32_t max_Z, min_Z;
 } tilecmd_drawtile_t;
 
 typedef struct tilecmd_cleartile_t
@@ -448,14 +449,9 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
 
             if (!pixel_discarded)
             {
-                uint32_t rcp_triarea2_mantissa = (drawcmd->rcp_triarea2 & 0xFF);
-                uint32_t rcp_triarea2_exponent = (drawcmd->rcp_triarea2 & 0xFF00) >> 8;
-                int32_t rcp_triarea2_rshift = (int32_t)(rcp_triarea2_exponent - 127);
-
-                if (rcp_triarea2_mantissa == 0)
-                {
-                    rcp_triarea2_mantissa = 0x100;
-                }
+                int32_t rcp_triarea2_mantissa = (drawcmd->rcp_triarea2 & 0xFF);
+                int32_t rcp_triarea2_exponent = (drawcmd->rcp_triarea2 & 0xFF00) >> 8;
+                int32_t rcp_triarea2_rshift = rcp_triarea2_exponent - 127;
 
                 int32_t shifted_e2 = -edges_row[2];
                 int32_t shifted_e0 = -edges_row[0];
@@ -471,35 +467,31 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
                 }
 
                 // compute non-perspective-correct barycentrics for vertices 1 and 2
-                uint32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 8;
-                uint32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 8;
-                if (u >= 0x100)
-                    u = 0xFF;
-                if (v >= 0x100)
-                    v = 0xFF;
+                int32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 1;
+                int32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 1;
+                assert(u < 0x8000);
+                assert(v < 0x8000);
                 
                 // not related to vertex w. Just third barycentric. Bad naming.
-                uint32_t w = 0xFF - u - v;
-                if (w >= 0x100)
-                    w = 0;
+                int32_t w = 0x7FFF - u - v;
 
                 // compute interpolated depth
                 // TODO? Might want to saturate here.
-                uint32_t pixel_Z = (drawcmd->vert_Zs[0] << 8)
+                // Can probably get 1 more bit of precision if I handle a carry bit properly
+                uint32_t pixel_Z = (drawcmd->vert_Zs[0] << 15)
                     + u * (drawcmd->vert_Zs[1] - drawcmd->vert_Zs[0])
                     + v * (drawcmd->vert_Zs[2] - drawcmd->vert_Zs[0]);
 
-                if (pixel_Z < drawcmd->min_Z)
-                    pixel_Z = drawcmd->min_Z;
+                if (pixel_Z < (drawcmd->min_Z << 15))
+                    pixel_Z = (drawcmd->min_Z << 15);
                 
-                if (pixel_Z > drawcmd->max_Z)
-                    pixel_Z = drawcmd->max_Z;
+                if (pixel_Z > (drawcmd->max_Z << 15))
+                    pixel_Z = (drawcmd->max_Z << 15);
 
                 if (pixel_Z < fb->depthbuffer[dst_i])
                 {
                     fb->depthbuffer[dst_i] = pixel_Z;
-
-                    fb->backbuffer[dst_i] = (0xFF << 24) | (w << 16) | (u << 8) | v;
+                    fb->backbuffer[dst_i] = (0xFF << 24) | ((w/0x80) << 16) | ((u/ 0x80) << 8) | (v/ 0x80);
                 }
             }
 
@@ -631,7 +623,15 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
 
             if (!pixel_discarded)
             {
-                fb->backbuffer[dst_i] = 0xFFFF00FF;
+                // uint32_t pixel_Z = (drawcmd->vert_Zs[0] << 8)
+                //     + u * (drawcmd->vert_Zs[1] - drawcmd->vert_Zs[0])
+                //     + v * (drawcmd->vert_Zs[2] - drawcmd->vert_Zs[0]);
+                // 
+                // if (pixel_Z < fb->depthbuffer[dst_i])
+                {
+                    // fb->depthbuffer[dst_i] - pixel_Z;
+                    fb->backbuffer[dst_i] = 0xFFFF00FF;
+                }
             }
 
             for (int32_t v = 0; v < num_test_edges; v++)
@@ -716,7 +716,7 @@ static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd
 
             if (!trivially_rejected)
             {
-                tilecmd_drawtile_t drawtilecmd;
+                tilecmd_drawtile_t drawtilecmd = *drawcmd;
 
                 int32_t edge_needs_test[3] = { 0, 0, 0 };
                 int32_t num_tests_necessary = 0;
@@ -1350,6 +1350,17 @@ clipping_end:
         verts[v].w = clipVerts[v].w;
         rcp_ws[v] = one_over_w;
     }
+
+    uint32_t min_Z = verts[0].z;
+    uint32_t max_Z = verts[0].z;
+    for (int32_t v = 1; v < 3; v++)
+    {
+        if ((uint32_t)verts[v].z < min_Z)
+            min_Z = (uint32_t)verts[v].z;
+        
+        if ((uint32_t)verts[v].z > max_Z)
+            max_Z = (uint32_t)verts[v].z;
+    }
     
     // get window coordinates bounding box
     int32_t bbox_min_x = verts[0].x;
@@ -1463,15 +1474,25 @@ commonsetup_end:
             triarea2_mantissa = triarea2_mantissa >> triarea2_mantissa_rshift;
         
         // perform the reciprocal
-        // important: this value is denormal, but the exponent is not updated to reflect that.
-        // there is an exception. when it's equal to 0x10000, the resulting masked value is 0x0000, but really means 0x10000
-        // this is breaking the rules compared to ordinary floating point
-        triarea2_mantissa = (0x10000 + (triarea2_mantissa / 2)) / triarea2_mantissa;
-        assert(triarea2_mantissa != 0);
+        // note: triarea2_mantissa is currently normalized as 1.8, and so is the numerator of the division
+        int32_t rcp_triarea2_mantissa = (0x10000 - 1 /*+ (triarea2_mantissa / 2)*/) / triarea2_mantissa;
+        assert(rcp_triarea2_mantissa != 0);
+        // if (triarea2_mantissa == 0x100)
+        // {
+        //     triarea2_mantissa = 0x80;
+        //     triarea2_mantissa_rshift--;
+        // }
+        // ensure the mantissa is denormalized so it fits in 8 bits
+        int32_t rcp_triarea2_mantissa_rshift = (31 - 7) - lzcnt(rcp_triarea2_mantissa);
+        if (rcp_triarea2_mantissa_rshift < 0)
+            rcp_triarea2_mantissa = rcp_triarea2_mantissa << -rcp_triarea2_mantissa_rshift;
+        else
+            rcp_triarea2_mantissa = rcp_triarea2_mantissa >> rcp_triarea2_mantissa_rshift;
 
-        triarea2_mantissa = triarea2_mantissa & 0xFF;
-        uint32_t triarea2_exponent = 127 + triarea2_mantissa_rshift;
-        uint32_t rcp_triarea2 = (triarea2_exponent << 8) | triarea2_mantissa;
+        assert(rcp_triarea2_mantissa < 0x100);
+        rcp_triarea2_mantissa = rcp_triarea2_mantissa & 0xFF;
+        uint32_t rcp_triarea2_exponent = 127 + triarea2_mantissa_rshift - rcp_triarea2_mantissa_rshift;
+        uint32_t rcp_triarea2 = (rcp_triarea2_exponent << 8) | rcp_triarea2_mantissa;
 
         drawsmalltricmd.rcp_triarea2 = rcp_triarea2;
 
@@ -1505,14 +1526,75 @@ commonsetup_end:
             edges[v] = edges[v] >> 8;
         }
 
-        drawsmalltricmd.min_Z = verts[0].z;
-        drawsmalltricmd.max_Z = verts[0].z;
-        for (int32_t v = 1; v < 3; v++)
+        drawsmalltricmd.min_Z = min_Z;
+        drawsmalltricmd.max_Z = max_Z;
+
+        // rotate vertices so the one with maximum edge equation slope doesn't get used in interpolation
+        int32_t max_slope_vertex = -1;
+        int32_t max_slope = 0;
+        for (int32_t i = 0; i < 3; i++)
         {
-            if (verts[v].z < drawsmalltricmd.min_Z)
-                drawsmalltricmd.min_Z = verts[v].z;
-            if (verts[v].z > drawsmalltricmd.max_Z)
-                drawsmalltricmd.max_Z = verts[v].z;
+            int32_t v1 = (i + 1) % 3;
+            int32_t slope = edge_dxs[v1] * edge_dxs[1] + edge_dys[v1] * edge_dys[v1];
+            assert((int64_t)slope == ((int64_t)edge_dxs[v1] * edge_dxs[1] + (int64_t)edge_dys[v1] * edge_dys[v1]));
+            if (slope > max_slope)
+            {
+                max_slope_vertex = i;
+                max_slope = slope;
+            }
+        }
+
+        if (max_slope_vertex == 1)
+        {
+            int32_t e = edges[0];
+            int32_t edx = edge_dxs[0];
+            int32_t edy = edge_dys[0];
+            xyzw_i32_t v = verts[0];
+            int32_t rcpw = rcp_ws[0];
+
+            edges[0] = edges[1];
+            edge_dxs[0] = edge_dxs[1];
+            edge_dys[0] = edge_dys[1];
+            verts[0] = verts[1];
+            rcp_ws[0] = rcp_ws[1];
+
+            edges[1] = edges[2];
+            edge_dxs[1] = edge_dxs[2];
+            edge_dys[1] = edge_dys[2];
+            verts[1] = verts[2];
+            rcp_ws[1] = rcp_ws[2];
+
+            edges[2] = e;
+            edge_dxs[2] = edx;
+            edge_dys[2] = edy;
+            verts[2] = v;
+            rcp_ws[2] = rcpw;
+        }
+        else if (max_slope_vertex == 2)
+        {
+            int32_t e = edges[0];
+            int32_t edx = edge_dxs[0];
+            int32_t edy = edge_dys[0];
+            xyzw_i32_t v = verts[0];
+            int32_t rcpw = rcp_ws[0];
+
+            edges[0] = edges[2];
+            edge_dxs[0] = edge_dxs[2];
+            edge_dys[0] = edge_dys[2];
+            verts[0] = verts[2];
+            rcp_ws[0] = rcp_ws[2];
+
+            edges[2] = edges[1];
+            edge_dxs[2] = edge_dxs[1];
+            edge_dys[2] = edge_dys[1];
+            verts[2] = verts[1];
+            rcp_ws[2] = rcp_ws[1];
+
+            edges[1] = e;
+            edge_dxs[1] = edx;
+            edge_dys[1] = edy;
+            verts[1] = v;
+            rcp_ws[1] = rcpw;
         }
 
         for (int32_t v = 0; v < 3; v++)
@@ -1819,6 +1901,9 @@ commonsetup_end:
                         drawtilecmd.edge_dxs[v] = (int32_t)edge_dxs[rotated_v];
                         drawtilecmd.edge_dys[v] = (int32_t)edge_dys[rotated_v];
                     }
+
+                    drawtilecmd.min_Z = min_Z;
+                    drawtilecmd.max_Z = max_Z;
 
                     fb->perfcounters.largetri_setup += qpc() - setup_start_pc;
                     framebuffer_push_tilecmd(fb, tile_i, &drawtilecmd.tilecmd_id, sizeof(drawtilecmd) / sizeof(uint32_t));
