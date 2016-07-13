@@ -308,6 +308,7 @@ int main()
     float look[3] = { 0.0f, 0.0f, -1.0f };
     float up[3] = { 0.0f, 1.0f, 0.0f };
     float view[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    float cammovespeed = 0.0f;
 
     LARGE_INTEGER then, now, freq;
     QueryPerformanceFrequency(&freq);
@@ -435,31 +436,46 @@ int main()
         POINT cursor;
         GetCursorPos(&cursor);
 
-        // only move and rotate camera when right mouse button is pressed
-        float activated = GetActiveWindow() == g_hWnd && (GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? 1.0f : 0.0f;
-        bool bactivated = activated != 0.0f;
-
-        auto keypressed = [bactivated](int vkey) {
-            return bactivated && (GetAsyncKeyState(vkey) & 0x8000);
-        };
-
-        flythrough_camera_update(
-            eye, look, up, view,
-            delta_time_sec,
-            (10.0f * keypressed(VK_LSHIFT) ? 2.0f : 1.0f) * activated,
-            0.5f * activated,
-            80.0f,
-            cursor.x - oldcursor.x, cursor.y - oldcursor.y,
-            keypressed('W'), keypressed('A'), keypressed('S'), keypressed('D'),
-            keypressed(VK_SPACE), keypressed(VK_LCONTROL),
-            FLYTHROUGH_CAMERA_LEFT_HANDED_BIT);
-
-        int32_t view_s1516[16];
-        for (int32_t i = 0; i < 16; i++)
+        // Camera update
         {
-            view_s1516[i] = s1516_flt(view[i]);
+            // only move and rotate camera when right mouse button is pressed
+            float activated = GetActiveWindow() == g_hWnd && (GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? 1.0f : 0.0f;
+            bool bactivated = activated != 0.0f;
+
+            auto keypressed = [bactivated](int vkey) {
+                return bactivated && (GetAsyncKeyState(vkey) & 0x8000);
+            };
+
+            int deltacursorx = cursor.x - oldcursor.x;
+            int deltacursory = cursor.y - oldcursor.y;
+
+            float keymovement = sqrtf(fabsf((float)keypressed('W') - keypressed('S')) + fabsf((float)keypressed('D') - keypressed('A')) + fabsf((float)keypressed(VK_SPACE) - keypressed(VK_LCONTROL)));
+            cammovespeed += delta_time_sec * keymovement * 2.0f;
+            if (keymovement == 0.0f)
+                cammovespeed = 0.0f;
+            if (cammovespeed > 20.0f)
+                cammovespeed = 20.0f;
+            if (cammovespeed < 0.0f)
+                cammovespeed = 0.0f;
+
+            flythrough_camera_update(
+                eye, look, up, view,
+                delta_time_sec,
+                cammovespeed * (keypressed(VK_LSHIFT) ? 2.0f : 1.0f) * activated,
+                0.5f * activated,
+                80.0f,
+                deltacursorx, deltacursory,
+                keypressed('W'), keypressed('A'), keypressed('S'), keypressed('D'),
+                keypressed(VK_SPACE), keypressed(VK_LCONTROL),
+                FLYTHROUGH_CAMERA_LEFT_HANDED_BIT);
+
+            int32_t view_s1516[16];
+            for (int32_t i = 0; i < 16; i++)
+            {
+                view_s1516[i] = s1516_flt(view[i]);
+            }
+            scene_set_view(sc, view_s1516);
         }
-        scene_set_view(sc, view_s1516);
 
         LARGE_INTEGER before_raster, after_raster;
         QueryPerformanceCounter(&before_raster);
