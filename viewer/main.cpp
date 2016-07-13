@@ -235,8 +235,8 @@ void main() {
 
 int main()
 {
-    int fbwidth = 1024;
-    int fbheight = 768;
+    int fbwidth = 1280;
+    int fbheight = 720;
 
     SetProcessDPIAware();
     init_window(fbwidth, fbheight);
@@ -729,10 +729,10 @@ int main()
                         }
                     }
 
-                    ImGui::Text("Small tri tile Raster: %u us", to_us(summed_tpcs.smalltri_tile_raster));
-                    ImGui::Text("Small tri coarse Raster: %u us", to_us(summed_tpcs.smalltri_coarse_raster));
-                    ImGui::Text("Large tri tile Raster: %u us", to_us(summed_tpcs.largetri_tile_raster));
-                    ImGui::Text("Large tri coarse Raster: %u us", to_us(summed_tpcs.largetri_coarse_raster));
+                    ImGui::Text("Small tri tile Rraster: %u us", to_us(summed_tpcs.smalltri_tile_raster));
+                    ImGui::Text("Small tri coarse raster: %u us", to_us(summed_tpcs.smalltri_coarse_raster));
+                    ImGui::Text("Large tri tile raster: %u us", to_us(summed_tpcs.largetri_tile_raster));
+                    ImGui::Text("Large tri coarse raster: %u us", to_us(summed_tpcs.largetri_coarse_raster));
                     ImGui::Text("Command buffer push: %u us", to_us(summed_tpcs.cmdbuf_pushcmd));
                     ImGui::Text("Command buffer resolve: %u us", to_us(summed_tpcs.cmdbuf_resolve));
                     ImGui::Text("Clear: %u us", to_us(summed_tpcs.clear));
@@ -755,10 +755,10 @@ int main()
 
                             ImGui::Text("Tile %d perfcounters:", tile_i);
 
-                            ImGui::Text("Small tri tile Raster: %u us", to_us(tpcs.smalltri_tile_raster));
-                            ImGui::Text("Small tri coarse Raster: %u us", to_us(tpcs.smalltri_coarse_raster));
-                            ImGui::Text("Large tri tile Raster: %u us", to_us(tpcs.largetri_tile_raster));
-                            ImGui::Text("Large tri coarse Raster: %u us", to_us(tpcs.largetri_coarse_raster));
+                            ImGui::Text("Small tri tile raster: %u us", to_us(tpcs.smalltri_tile_raster));
+                            ImGui::Text("Small tri coarse raster: %u us", to_us(tpcs.smalltri_coarse_raster));
+                            ImGui::Text("Large tri tile raster: %u us", to_us(tpcs.largetri_tile_raster));
+                            ImGui::Text("Large tri coarse raster: %u us", to_us(tpcs.largetri_coarse_raster));
                             ImGui::Text("Command buffer push: %u us", to_us(tpcs.cmdbuf_pushcmd));
                             ImGui::Text("Command buffer resolve: %u us", to_us(tpcs.cmdbuf_resolve));
                             ImGui::Text("Clear: %u us", to_us(tpcs.clear));
