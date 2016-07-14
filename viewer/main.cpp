@@ -342,7 +342,7 @@ int main()
     uint32_t* d32_pixels = (uint32_t*)malloc(fbwidth * fbheight * sizeof(uint32_t));
     assert(d32_pixels);
 
-    const int kZoomTextureWidth = 32;
+    const int kZoomTextureWidth = 8;
     GLuint zoomTexture;
     glGenTextures(1, &zoomTexture);
     glBindTexture(GL_TEXTURE_2D, zoomTexture);
@@ -718,7 +718,7 @@ int main()
                     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kZoomTextureWidth, kZoomTextureWidth, GL_RGBA, GL_UNSIGNED_BYTE, zoomImagePixels);
                     glBindTexture(GL_TEXTURE_2D, 0);
                     
-                    float imsize = (float)kZoomTextureWidth * 2;
+                    float imsize = (float)kZoomTextureWidth * 8;
                     ImGui::Image((ImTextureID)(intptr_t)zoomTexture, ImVec2(imsize, imsize));
                     ImGui::SameLine();
                     ImGui::Text("Cursor zoom\n(Fine control: hjkl)");
