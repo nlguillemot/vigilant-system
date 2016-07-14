@@ -281,8 +281,9 @@ int main()
 
     const char* all_model_names[] = {
         "cube",
-        "teapot",
+        "bigcube",
         "gourd",
+        "teapot",
         "dragon",
         "buddha"
     };
@@ -374,7 +375,7 @@ int main()
 
         switched_model |= loaded_model_first_ids[curr_model_index] == -1;
 
-        ImGui::SetNextWindowSize(ImVec2(400, 275));
+        ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiSetCond_Once);
         if (ImGui::Begin("Toolbox"))
         {
             ImGui::Checkbox("Show tiles", &show_tiles);

@@ -602,7 +602,7 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
     int32_t num_test_edges = drawcmd->tilecmd_id - tilecmd_id_drawtile_0edge;
 
     int32_t edges[3];
-    for (int32_t v = 0; v < num_test_edges; v++)
+    for (int32_t v = 0; v < 3; v++)
     {
         edges[v] = drawcmd->edges[v];
     }
@@ -615,7 +615,7 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
         fineblock_y++, fineblock_ybits = (fineblock_ybits - TILE_Y_SWIZZLE_MASK) & TILE_Y_SWIZZLE_MASK)
     {
         int32_t edges_row[3];
-        for (int32_t v = 0; v < num_test_edges; v++)
+        for (int32_t v = 0; v < 3; v++)
         {
             edges_row[v] = edges[v];
         }
@@ -659,11 +659,7 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
 
                 // compute non-perspective-correct barycentrics for vertices 1 and 2
                  int32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 16;
-                 if (num_test_edges < 3)
-                     u = 0x0;
                  int32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 16;
-                 if (num_test_edges < 1)
-                     v = 0x0;
                  assert(u < 0x8000);
                  assert(v < 0x8000);
 
@@ -688,13 +684,13 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
                 }
             }
 
-            for (int32_t v = 0; v < num_test_edges; v++)
+            for (int32_t v = 0; v < 3; v++)
             {
                 edges_row[v] += drawcmd->edge_dxs[v];
             }
         }
 
-        for (int32_t v = 0; v < num_test_edges; v++)
+        for (int32_t v = 0; v < 3; v++)
         {
             edges[v] += drawcmd->edge_dys[v];
         }
@@ -711,14 +707,14 @@ static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd
 
     int32_t coarse_edge_dxs[3];
     int32_t coarse_edge_dys[3];
-    for (int32_t v = 0; v < num_test_edges; v++)
+    for (int32_t v = 0; v < 3; v++)
     {
         coarse_edge_dxs[v] = drawcmd->edge_dxs[v] * COARSE_BLOCK_WIDTH_IN_PIXELS;
         coarse_edge_dys[v] = drawcmd->edge_dys[v] * COARSE_BLOCK_WIDTH_IN_PIXELS;
     }
 
     int32_t edges[3];
-    for (int32_t v = 0; v < num_test_edges; v++)
+    for (int32_t v = 0; v < 3; v++)
     {
         edges[v] = drawcmd->edges[v];
     }
@@ -742,7 +738,7 @@ static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd
     for (int32_t cb_y = 0; cb_y < TILE_WIDTH_IN_COARSE_BLOCKS; cb_y++)
     {
         int32_t row_edges[3];
-        for (int32_t v = 0; v < num_test_edges; v++)
+        for (int32_t v = 0; v < 3; v++)
         {
             row_edges[v] = edges[v];
         }
@@ -795,7 +791,7 @@ static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd
                     else if (!edge_needs_test[1]) vertex_rotation = 2;
                 }
 
-                for (int32_t v = 0; v < num_tests_necessary; v++)
+                for (int32_t v = 0; v < 3; v++)
                 {
                     int32_t rotated_v = (v + vertex_rotation) % 3;
 
@@ -812,7 +808,7 @@ static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd
                 tile_start_pc = qpc();
             }
 
-            for (int32_t v = 0; v < num_test_edges; v++)
+            for (int32_t v = 0; v < 3; v++)
             {
                 row_edges[v] += coarse_edge_dxs[v];
             }
@@ -824,7 +820,7 @@ static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd
             }
         }
 
-        for (int32_t v = 0; v < num_test_edges; v++)
+        for (int32_t v = 0; v < 3; v++)
         {
             edges[v] += coarse_edge_dys[v];
         }
@@ -1512,6 +1508,7 @@ commonsetup_end:
             triarea2_mantissa = triarea2 << -triarea2_mantissa_rshift;
         else
             triarea2_mantissa = triarea2 >> triarea2_mantissa_rshift;
+        assert(triarea2_mantissa & 0x10000);
         
         // perform the reciprocal
         // note: triarea2_mantissa is currently normalized as 1.16, and so is the numerator of the division (before being adjusted for rounding)
@@ -1524,6 +1521,8 @@ commonsetup_end:
             rcp_triarea2_mantissa = rcp_triarea2_mantissa << -rcp_triarea2_mantissa_rshift;
         else
             rcp_triarea2_mantissa = rcp_triarea2_mantissa >> rcp_triarea2_mantissa_rshift;
+        assert(!(rcp_triarea2_mantissa & 0x10000));
+        assert(rcp_triarea2_mantissa & 0x8000);
 
         assert(rcp_triarea2_mantissa < 0x10000);
         rcp_triarea2_mantissa = rcp_triarea2_mantissa & 0xFFFF;
@@ -1825,6 +1824,7 @@ commonsetup_end:
             triarea2_mantissa = (int32_t)(triarea2 << -triarea2_mantissa_rshift);
         else
             triarea2_mantissa = (int32_t)(triarea2 >> triarea2_mantissa_rshift);
+        assert(triarea2_mantissa & 0x10000);
 
         // perform the reciprocal
         // note: triarea2_mantissa is currently normalized as 1.16, and so is the numerator of the division (before being adjusted for rounding)
@@ -1837,6 +1837,8 @@ commonsetup_end:
             rcp_triarea2_mantissa = rcp_triarea2_mantissa << -rcp_triarea2_mantissa_rshift;
         else
             rcp_triarea2_mantissa = rcp_triarea2_mantissa >> rcp_triarea2_mantissa_rshift;
+        assert(!(rcp_triarea2_mantissa & 0x10000));
+        assert(rcp_triarea2_mantissa & 0x8000);
 
         assert(rcp_triarea2_mantissa < 0x10000);
         rcp_triarea2_mantissa = rcp_triarea2_mantissa & 0xFFFF;
