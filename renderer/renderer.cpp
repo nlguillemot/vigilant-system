@@ -194,7 +194,7 @@ void renderer_render_scene(renderer_t* rd, scene_t* sc)
     for (uint32_t instance_id : *sc->instances)
     {
         if (g_FilterInstances && (g_FilterInstance0 != -1) &&
-            instance_index != g_FilterTriangle0)
+            instance_index != g_FilterInstance0)
         {
             goto skipinstance;
         }

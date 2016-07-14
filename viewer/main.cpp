@@ -729,7 +729,7 @@ int main()
                         }
                     }
 
-                    ImGui::Text("Small tri tile Rraster: %u us", to_us(summed_tpcs.smalltri_tile_raster));
+                    ImGui::Text("Small tri tile raster: %u us", to_us(summed_tpcs.smalltri_tile_raster));
                     ImGui::Text("Small tri coarse raster: %u us", to_us(summed_tpcs.smalltri_coarse_raster));
                     ImGui::Text("Large tri tile raster: %u us", to_us(summed_tpcs.largetri_tile_raster));
                     ImGui::Text("Large tri coarse raster: %u us", to_us(summed_tpcs.largetri_coarse_raster));

@@ -24,13 +24,6 @@
 #include <Windows.h>
 #endif
 
-// runs unit tests automatically when the library is used
-//#define RASTERIZER_UNIT_TESTS
-
-#ifdef RASTERIZER_UNIT_TESTS
-void run_rasterizer_unit_tests();
-#endif
-
 // Sized according to the Larrabee rasterizer's description
 // The tile size must be up to 128x128
 //    this is because any edge that isn't trivially accepted or rejected
@@ -88,7 +81,7 @@ __forceinline uint32_t pdep_u32(uint32_t source, uint32_t mask)
 }
 #endif
 
-// count leading zeros
+// count leading zeros (32 bits)
 #ifdef __AVX2__
 __forceinline uint32_t lzcnt(uint32_t value)
 {
@@ -113,13 +106,49 @@ __forceinline uint32_t lzcnt(uint32_t value)
 __forceinline uint32_t lzcnt(uint32_t value)
 {
     // generic implementation
-    int32_t i;
+    uint32_t i;
     for (i = 0; i < 32; i++)
     {
         if (value & 0x80000000)
             break;
         
         value = value << 1;
+    }
+    return i;
+}
+#endif
+
+// count leading zeros (64 bits)
+#ifdef __AVX2__
+__forceinline uint64_t lzcnt64(uint64_t value)
+{
+    return __lzcnt64(value);
+}
+#elif defined(_MSC_VER)
+__forceinline uint64_t lzcnt64(uint64_t value)
+{
+    // MSVC implementation
+    unsigned long index;
+    if (_BitScanReverse64(&index, value))
+    {
+        return (64 - 1) - index;
+    }
+    else
+    {
+        return 64;
+    }
+}
+#else
+__forceinline uint64_t lzcnt64(uint64_t value)
+{
+    // generic implementation
+    uint64_t i;
+    for (i = 0; i < 64; i++)
+    {
+        if (value & 0x8000000000000000ULL)
+            break;
+
+        value = value << 1ULL;
     }
     return i;
 }
@@ -284,7 +313,9 @@ typedef struct tilecmd_drawtile_t
     int32_t edges[3];
     int32_t edge_dxs[3];
     int32_t edge_dys[3];
+    int32_t vert_Zs[3];
     uint32_t max_Z, min_Z;
+    uint32_t rcp_triarea2;
 } tilecmd_drawtile_t;
 
 typedef struct tilecmd_cleartile_t
@@ -323,16 +354,6 @@ typedef struct framebuffer_t
 
 framebuffer_t* new_framebuffer(int32_t width, int32_t height)
 {
-#ifdef RASTERIZER_UNIT_TESTS
-    static int32_t ran_rasterizer_unit_tests_once = 0;
-    if (!ran_rasterizer_unit_tests_once)
-    {
-        // set this before running the tests, so that unit tests can create framebuffers without causing infinite recursion
-        ran_rasterizer_unit_tests_once = 1;
-        run_rasterizer_unit_tests();
-    }
-#endif
-
     // limits of the rasterizer's precision
     // this is based on an analysis of the range of results of the 2D cross product between two fixed16.8 numbers.
     assert(width < 16384);
@@ -515,8 +536,6 @@ static void draw_tile_smalltri(framebuffer_t* fb, int32_t tile_id, const tilecmd
 {
     uint64_t tile_start_pc = qpc();
 
-    uint64_t old_coarse_pc = fb->tile_perfcounters[tile_id].smalltri_coarse_raster;
-
     int32_t coarse_edge_dxs[3];
     int32_t coarse_edge_dys[3];
     for (int32_t v = 0; v < 3; v++)
@@ -559,7 +578,9 @@ static void draw_tile_smalltri(framebuffer_t* fb, int32_t tile_id, const tilecmd
             int32_t coarse_topleft_x = tile_x * TILE_WIDTH_IN_PIXELS + cb_x * COARSE_BLOCK_WIDTH_IN_PIXELS;
             int32_t coarse_topleft_y = tile_y * TILE_WIDTH_IN_PIXELS + cb_y * COARSE_BLOCK_WIDTH_IN_PIXELS;
             
+            fb->tile_perfcounters[tile_id].smalltri_tile_raster += qpc() - tile_start_pc;
             draw_coarse_block_smalltri(fb, tile_id, coarse_topleft_x, coarse_topleft_y, &cbargs);
+            tile_start_pc = qpc();
 
             for (int32_t v = 0; v < 3; v++)
             {
@@ -573,9 +594,7 @@ static void draw_tile_smalltri(framebuffer_t* fb, int32_t tile_id, const tilecmd
         }
     }
 
-    uint64_t tile_pc = qpc() - tile_start_pc;
-    tile_pc -= fb->tile_perfcounters[tile_id].smalltri_coarse_raster - old_coarse_pc;
-    fb->tile_perfcounters[tile_id].smalltri_tile_raster = tile_pc;
+    fb->tile_perfcounters[tile_id].smalltri_tile_raster = qpc() - tile_start_pc;
 }
 
 static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32_t coarse_topleft_x, int32_t coarse_topleft_y, const tilecmd_drawtile_t* drawcmd)
@@ -623,14 +642,53 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
 
             if (!pixel_discarded)
             {
-                // uint32_t pixel_Z = (drawcmd->vert_Zs[0] << 8)
-                //     + u * (drawcmd->vert_Zs[1] - drawcmd->vert_Zs[0])
-                //     + v * (drawcmd->vert_Zs[2] - drawcmd->vert_Zs[0]);
-                // 
-                // if (pixel_Z < fb->depthbuffer[dst_i])
+                int32_t rcp_triarea2_mantissa = (drawcmd->rcp_triarea2 & 0xFFFF);
+                int32_t rcp_triarea2_exponent = (drawcmd->rcp_triarea2 & 0xFF0000) >> 16;
+                int32_t rcp_triarea2_rshift = rcp_triarea2_exponent - 127;
+
+                int32_t shifted_e2 = -edges_row[2];
+                int32_t shifted_e0 = -edges_row[0];
+                if (rcp_triarea2_rshift < 0)
                 {
-                    // fb->depthbuffer[dst_i] - pixel_Z;
-                    fb->backbuffer[dst_i] = 0xFFFF00FF;
+                    shifted_e2 = shifted_e2 << -rcp_triarea2_rshift;
+                    shifted_e0 = shifted_e0 << -rcp_triarea2_rshift;
+                }
+                else
+                {
+                    shifted_e2 = shifted_e2 >> rcp_triarea2_rshift;
+                    shifted_e0 = shifted_e0 >> rcp_triarea2_rshift;
+                }
+
+                // compute non-perspective-correct barycentrics for vertices 1 and 2
+                 int32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 16 >> 1;
+                 if (num_test_edges < 3)
+                     u = 0x0;
+                 int32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 16 >> 1;
+                 if (num_test_edges < 1)
+                     v = 0x0;
+                 assert(u < 0x8000);
+                 assert(v < 0x8000);
+
+                 // not related to vertex w. Just third barycentric. Bad naming.
+                 int32_t w = 0x7FFF - u - v;
+
+                 // compute interpolated depth
+                 // TODO? Might want to saturate here.
+                 // Can probably get 1 more bit of precision if I handle a overflow bit properly? FMA magic?
+                 uint32_t pixel_Z = (drawcmd->vert_Zs[0] << 15)
+                     + u * (drawcmd->vert_Zs[1] - drawcmd->vert_Zs[0])
+                     + v * (drawcmd->vert_Zs[2] - drawcmd->vert_Zs[0]);
+
+                 if (pixel_Z < (drawcmd->min_Z << 15))
+                     pixel_Z = (drawcmd->min_Z << 15);
+
+                 if (pixel_Z >(drawcmd->max_Z << 15))
+                     pixel_Z = (drawcmd->max_Z << 15);
+                
+                 if (pixel_Z < fb->depthbuffer[dst_i])
+                {
+                    fb->depthbuffer[dst_i] = pixel_Z;
+                    fb->backbuffer[dst_i] = (0xFF << 24) | ((w / 0x80) << 16) | ((u / 0x80) << 8) | (v / 0x80);
                 }
             }
 
@@ -657,14 +715,14 @@ static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd
 
     int32_t coarse_edge_dxs[3];
     int32_t coarse_edge_dys[3];
-    for (int32_t v = 0; v < 3; v++)
+    for (int32_t v = 0; v < num_test_edges; v++)
     {
         coarse_edge_dxs[v] = drawcmd->edge_dxs[v] * COARSE_BLOCK_WIDTH_IN_PIXELS;
         coarse_edge_dys[v] = drawcmd->edge_dys[v] * COARSE_BLOCK_WIDTH_IN_PIXELS;
     }
 
     int32_t edges[3];
-    for (int32_t v = 0; v < 3; v++)
+    for (int32_t v = 0; v < num_test_edges; v++)
     {
         edges[v] = drawcmd->edges[v];
     }
@@ -688,7 +746,7 @@ static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd
     for (int32_t cb_y = 0; cb_y < TILE_WIDTH_IN_COARSE_BLOCKS; cb_y++)
     {
         int32_t row_edges[3];
-        for (int32_t v = 0; v < 3; v++)
+        for (int32_t v = 0; v < num_test_edges; v++)
         {
             row_edges[v] = edges[v];
         }
@@ -741,7 +799,7 @@ static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd
                     else if (!edge_needs_test[1]) vertex_rotation = 2;
                 }
 
-                for (int32_t v = 0; v < 3; v++)
+                for (int32_t v = 0; v < num_tests_necessary; v++)
                 {
                     int32_t rotated_v = (v + vertex_rotation) % 3;
 
@@ -758,7 +816,7 @@ static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd
                 tile_start_pc = qpc();
             }
 
-            for (int32_t v = 0; v < 3; v++)
+            for (int32_t v = 0; v < num_test_edges; v++)
             {
                 row_edges[v] += coarse_edge_dxs[v];
             }
@@ -770,7 +828,7 @@ static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd
             }
         }
 
-        for (int32_t v = 0; v < 3; v++)
+        for (int32_t v = 0; v < num_test_edges; v++)
         {
             edges[v] += coarse_edge_dys[v];
         }
@@ -832,11 +890,6 @@ static void debugprint_cmdbuf(tile_cmdbuf_t* cmdbuf)
 static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
 {
     uint64_t resolve_start_pc = qpc();
-    uint64_t old_largetri_tile_pc = fb->tile_perfcounters[tile_id].largetri_tile_raster;
-    uint64_t old_largetri_coarse_pc = fb->tile_perfcounters[tile_id].largetri_coarse_raster;
-    uint64_t old_smalltri_tile_pc = fb->tile_perfcounters[tile_id].smalltri_tile_raster;
-    uint64_t old_smalltri_coarse_pc = fb->tile_perfcounters[tile_id].smalltri_coarse_raster;
-    uint64_t old_clear_pc = fb->tile_perfcounters[tile_id].clear;
 
     tile_cmdbuf_t* cmdbuf = &fb->tile_cmdbufs[tile_id];
     
@@ -855,17 +908,26 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
         }
         else if (tilecmd_id == tilecmd_id_drawsmalltri)
         {
+            fb->tile_perfcounters[tile_id].cmdbuf_resolve += qpc() - resolve_start_pc;
             draw_tile_smalltri(fb, tile_id, (tilecmd_drawsmalltri_t*)cmd);
+            resolve_start_pc = qpc();
+
             cmd += sizeof(tilecmd_drawsmalltri_t) / sizeof(uint32_t);
         }
         else if (tilecmd_id >= tilecmd_id_drawtile_0edge && tilecmd_id <= tilecmd_id_drawtile_3edge)
-        {           
+        {   
+            fb->tile_perfcounters[tile_id].cmdbuf_resolve += qpc() - resolve_start_pc;
             draw_tile_largetri(fb, tile_id, (tilecmd_drawtile_t*)cmd);
+            resolve_start_pc = qpc();
+
             cmd += sizeof(tilecmd_drawtile_t) / sizeof(uint32_t);
         }
         else if (tilecmd_id == tilecmd_id_cleartile)
         {
+            fb->tile_perfcounters[tile_id].cmdbuf_resolve += qpc() - resolve_start_pc;
             clear_tile(fb, tile_id, (tilecmd_cleartile_t*)cmd);
+            resolve_start_pc = qpc();
+
             cmd += sizeof(tilecmd_cleartile_t) / sizeof(uint32_t);
         }
         else
@@ -889,17 +951,7 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
 
     cmdbuf->cmdbuf_read = cmd;
 
-    uint64_t resolve_pc = qpc() - resolve_start_pc;
-
-    resolve_pc -= fb->tile_perfcounters[tile_id].smalltri_tile_raster - old_smalltri_tile_pc;
-    resolve_pc -= fb->tile_perfcounters[tile_id].smalltri_coarse_raster - old_smalltri_coarse_pc;
-
-    resolve_pc -= fb->tile_perfcounters[tile_id].largetri_tile_raster - old_largetri_tile_pc;
-    resolve_pc -= fb->tile_perfcounters[tile_id].largetri_coarse_raster - old_largetri_coarse_pc;
-
-    resolve_pc -= fb->tile_perfcounters[tile_id].clear - old_clear_pc;
-
-    fb->tile_perfcounters[tile_id].cmdbuf_resolve += resolve_pc;
+    fb->tile_perfcounters[tile_id].cmdbuf_resolve += qpc() - resolve_start_pc;
 }
 
 static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const uint32_t* cmd_dwords, int32_t num_dwords)
@@ -907,12 +959,6 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
     assert(tile_id < fb->total_num_tiles);
 
     uint64_t pushcmd_start_pc = qpc();
-    uint64_t old_largetri_tile_pc = fb->tile_perfcounters[tile_id].largetri_tile_raster;
-    uint64_t old_largetri_coarse_pc = fb->tile_perfcounters[tile_id].largetri_coarse_raster;
-    uint64_t old_smalltri_tile_pc = fb->tile_perfcounters[tile_id].smalltri_tile_raster;
-    uint64_t old_smalltri_coarse_pc = fb->tile_perfcounters[tile_id].smalltri_coarse_raster;
-    uint64_t old_resolve_pc = fb->tile_perfcounters[tile_id].cmdbuf_resolve;
-    uint64_t old_clear_pc = fb->tile_perfcounters[tile_id].clear;
 
     tile_cmdbuf_t* cmdbuf = &fb->tile_cmdbufs[tile_id];
 
@@ -928,7 +974,10 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
         // read ptr is after write ptr and there's not enough room in between
         // therefore, need to flush
         // note: write is not allowed to "catch up" to read from behind, hence why a +1 is added to keep them separate.
+        fb->tile_perfcounters[tile_id].cmdbuf_pushcmd += qpc() - pushcmd_start_pc;
         framebuffer_resolve_tile(fb, tile_id);
+        pushcmd_start_pc = qpc();
+
         // after resolve, read should now have "caught up" to write from behind
         assert(cmdbuf->cmdbuf_read == cmdbuf->cmdbuf_write);
     }
@@ -948,8 +997,10 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
         {
             // write is not allowed to catch up to read,
             // so make sure read catches up to write instead.
+            fb->tile_perfcounters[tile_id].cmdbuf_pushcmd += qpc() - pushcmd_start_pc;
             framebuffer_resolve_tile(fb, tile_id);
-            
+            pushcmd_start_pc = qpc();
+
             // reset read back to start since we'll set write back to start also
             cmdbuf->cmdbuf_read = cmdbuf->cmdbuf_start;
         }
@@ -962,7 +1013,10 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
             // read ptr is after write ptr and there's not enough room in between
             // therefore, need to flush
             // note: write is not allowed to "catch up" to read from behind, hence why a +1 is added to keep them separate.
+            fb->tile_perfcounters[tile_id].cmdbuf_pushcmd += qpc() - pushcmd_start_pc;
             framebuffer_resolve_tile(fb, tile_id);
+            pushcmd_start_pc = qpc();
+
             // after resolve, read should now have "caught up" to write from behind
             assert(cmdbuf->cmdbuf_read == cmdbuf->cmdbuf_write);
         }
@@ -990,7 +1044,9 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
         {
             // write is not allowed to catch up to read,
             // so make sure read catches up to write instead.
+            fb->tile_perfcounters[tile_id].cmdbuf_pushcmd += qpc() - pushcmd_start_pc;
             framebuffer_resolve_tile(fb, tile_id);
+            pushcmd_start_pc = qpc();
 
             // since the resolve made read ptr catch up to write ptr, that means read reached the end
             // that also means it currently looped back to the start, so the write ptr can be put there too
@@ -1000,19 +1056,7 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
         cmdbuf->cmdbuf_write = cmdbuf->cmdbuf_start;
     }
 
-    uint64_t pushcmd_pc = qpc() - pushcmd_start_pc;
-
-    // remove non-push parts of the work inside this function
-    pushcmd_pc -= fb->tile_perfcounters[tile_id].smalltri_tile_raster - old_smalltri_tile_pc;
-    pushcmd_pc -= fb->tile_perfcounters[tile_id].smalltri_coarse_raster - old_smalltri_coarse_pc;
-    
-    pushcmd_pc -= fb->tile_perfcounters[tile_id].largetri_tile_raster - old_largetri_tile_pc;
-    pushcmd_pc -= fb->tile_perfcounters[tile_id].largetri_coarse_raster - old_largetri_coarse_pc;
-    
-    pushcmd_pc -= fb->tile_perfcounters[tile_id].cmdbuf_resolve - old_resolve_pc;
-    pushcmd_pc -= fb->tile_perfcounters[tile_id].clear - old_clear_pc;
-
-    fb->tile_perfcounters[tile_id].cmdbuf_pushcmd += pushcmd_pc;
+    fb->tile_perfcounters[tile_id].cmdbuf_pushcmd += qpc() - pushcmd_start_pc;
 }
 
 void framebuffer_resolve(framebuffer_t* fb)
@@ -1467,21 +1511,17 @@ commonsetup_end:
         // compute 1/(2triarea) and convert to a pseudo 8.8 floating point value
         int32_t triarea2_lzcnt = lzcnt(triarea2);
         int32_t triarea2_mantissa_rshift = (31 - 8) - triarea2_lzcnt;
-        uint32_t triarea2_mantissa = triarea2;
+        int32_t triarea2_mantissa;
         if (triarea2_mantissa_rshift < 0)
-            triarea2_mantissa = triarea2_mantissa << -triarea2_mantissa_rshift;
+            triarea2_mantissa = triarea2 << -triarea2_mantissa_rshift;
         else
-            triarea2_mantissa = triarea2_mantissa >> triarea2_mantissa_rshift;
+            triarea2_mantissa = triarea2 >> triarea2_mantissa_rshift;
         
         // perform the reciprocal
-        // note: triarea2_mantissa is currently normalized as 1.8, and so is the numerator of the division
-        int32_t rcp_triarea2_mantissa = (0x10000 - 1 /*+ (triarea2_mantissa / 2)*/) / triarea2_mantissa;
+        // note: triarea2_mantissa is currently normalized as 1.8, and so is the numerator of the division (before being adjusted for rounding)
+        int32_t rcp_triarea2_mantissa = 0xFFFF / triarea2_mantissa;
         assert(rcp_triarea2_mantissa != 0);
-        // if (triarea2_mantissa == 0x100)
-        // {
-        //     triarea2_mantissa = 0x80;
-        //     triarea2_mantissa_rshift--;
-        // }
+        
         // ensure the mantissa is denormalized so it fits in 8 bits
         int32_t rcp_triarea2_mantissa_rshift = (31 - 7) - lzcnt(rcp_triarea2_mantissa);
         if (rcp_triarea2_mantissa_rshift < 0)
@@ -1762,7 +1802,7 @@ commonsetup_end:
         // this results in some extra overhead, but it's not a big deal when you consider that this happens only for large triangles.
         // The tens of thousands of pixels that large triangles generate outweigh the cost of slightly more expensive setup.
 
-        int64_t triarea2 = ((int64_t)verts[1].x - verts[0].x) * ((int64_t)verts[2].y - verts[0].y) - ((int64_t)verts[1].y - verts[0].y) * ((int64_t)verts[2].x - verts[0].x);
+        int64_t triarea2 = (((int64_t)verts[1].x - verts[0].x) * ((int64_t)verts[2].y - verts[0].y) - ((int64_t)verts[1].y - verts[0].y) * ((int64_t)verts[2].x - verts[0].x)) >> 8;
         
         if (triarea2 == 0)
         {
@@ -1775,20 +1815,37 @@ commonsetup_end:
             verts[1] = verts[2];
             verts[2] = tmp;
             triarea2 = -triarea2;
+
+            int32_t tmp_rcp_w = rcp_ws[1];
+            rcp_ws[1] = rcp_ws[2];
+            rcp_ws[2] = tmp_rcp_w;
         }
 
-        // pre-multiply by the base
-        int64_t rcp_triarea2 = (int64_t)1 << 32;
-        // Rounding: mid values are rounded up (down for negative values)
-        if ((rcp_triarea2 >= 0 && triarea2 >= 0) || (rcp_triarea2 < 0 && triarea2 < 0))
-            rcp_triarea2 += triarea2 / 2;
+        // compute 1/(2triarea) and convert to a pseudo 8.16 floating point value
+        int32_t triarea2_lzcnt = (int32_t)lzcnt64(triarea2);
+        int32_t triarea2_mantissa_rshift = (63 - 16) - triarea2_lzcnt;
+        int32_t triarea2_mantissa;
+        if (triarea2_mantissa_rshift < 0)
+            triarea2_mantissa = (int32_t)(triarea2 << -triarea2_mantissa_rshift);
         else
-            rcp_triarea2 -= triarea2 / 2;
-        rcp_triarea2 = rcp_triarea2 / triarea2;
+            triarea2_mantissa = (int32_t)(triarea2 >> triarea2_mantissa_rshift);
 
-        // TODO: Find a better way to interpolate barycentrics that doesn't result in 0 for 1/triarea2?
-        if (rcp_triarea2 == 0)
-            rcp_triarea2 = 1;
+        // perform the reciprocal
+        // note: triarea2_mantissa is currently normalized as 1.16, and so is the numerator of the division (before being adjusted for rounding)
+        int32_t rcp_triarea2_mantissa = 0xFFFFFFFF / triarea2_mantissa;
+        assert(rcp_triarea2_mantissa != 0);
+
+        // ensure the mantissa is denormalized so it fits in 16 bits
+        int32_t rcp_triarea2_mantissa_rshift = (31 - 15) - lzcnt(rcp_triarea2_mantissa);
+        if (rcp_triarea2_mantissa_rshift < 0)
+            rcp_triarea2_mantissa = rcp_triarea2_mantissa << -rcp_triarea2_mantissa_rshift;
+        else
+            rcp_triarea2_mantissa = rcp_triarea2_mantissa >> rcp_triarea2_mantissa_rshift;
+
+        assert(rcp_triarea2_mantissa < 0x10000);
+        rcp_triarea2_mantissa = rcp_triarea2_mantissa & 0xFFFF;
+        uint32_t rcp_triarea2_exponent = 127 + triarea2_mantissa_rshift - rcp_triarea2_mantissa_rshift;
+        uint32_t rcp_triarea2 = (rcp_triarea2_exponent << 16) | rcp_triarea2_mantissa;
 
         int64_t edges[3];
         int64_t edge_dxs[3], edge_dys[3];
@@ -1904,6 +1961,8 @@ commonsetup_end:
 
                     drawtilecmd.min_Z = min_Z;
                     drawtilecmd.max_Z = max_Z;
+
+                    drawtilecmd.rcp_triarea2 = rcp_triarea2;
 
                     fb->perfcounters.largetri_setup += qpc() - setup_start_pc;
                     framebuffer_push_tilecmd(fb, tile_i, &drawtilecmd.tilecmd_id, sizeof(drawtilecmd) / sizeof(uint32_t));
@@ -2042,212 +2101,3 @@ void framebuffer_get_tile_perfcounters(framebuffer_t* fb, tile_perfcounters_t ti
         tile_pcs[i] = fb->tile_perfcounters[i];
     }
 }
-
-#ifdef RASTERIZER_UNIT_TESTS
-
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <stb_image_write.h>
-
-void run_rasterizer_unit_tests()
-{
-    // pdep tests
-    {
-        //             source  mask
-        assert(pdep_u32(0b000, 0b000000) == 0b000000);
-        assert(pdep_u32(0b001, 0b000001) == 0b000001);
-        assert(pdep_u32(0b001, 0b000010) == 0b000010);
-        assert(pdep_u32(0b011, 0b001100) == 0b001100);
-        assert(pdep_u32(0b101, 0b101010) == 0b100010);
-        assert(pdep_u32(0b010, 0b010101) == 0b000100);
-    }
-
-    // swizzle test
-    {
-        int32_t w = TILE_WIDTH_IN_PIXELS * 2;
-        int32_t h = TILE_WIDTH_IN_PIXELS * 2;
-
-        framebuffer_t* fb = new_framebuffer(w, h);
-        uint8_t* rowmajor_data = (uint8_t*)malloc(w * h * 4);
-
-        // write indices of pixels linearly in memory (ignoring swizzling)
-        // this will be read back and checked to verify the layout
-        // For tiles of 4x4 pixels, a 8x8 row major image should look something like:
-        //  0  1  4  5 | 16 17 20 21
-        //  2  3  6  7 | 18 19 22 23
-        //  8  9 12 13 | 24 25 28 29
-        // 10 11 14 15 | 26 27 30 31
-        // -------------------------
-        // 32 33 36 37 | 48 49 52 53
-        // 34 35 38 39 | 50 51 54 55
-        // 40 41 44 45 | 56 57 60 61
-        // 42 43 46 47 | 58 59 62 63
-        // see: https://en.wikipedia.org/wiki/Z-order_curve
-        for (int32_t i = 0; i < fb->pixels_per_slice; i++)
-        {
-            fb->backbuffer[i] = i;
-        }
-
-        framebuffer_pack_row_major(fb, 0, 0, w, h, pixelformat_r8g8b8a8_unorm, rowmajor_data);
-
-        for (int32_t y = 0; y < h; y++)
-        {
-            int32_t tile_y = y / TILE_WIDTH_IN_PIXELS;
-
-            for (int32_t x = 0; x < w; x++)
-            {
-                int32_t tile_x = x / TILE_WIDTH_IN_PIXELS;
-                int32_t tile_i = tile_y * fb->width_in_tiles + tile_x;
-                int32_t topleft_pixel_i = tile_i * PIXELS_PER_TILE;
-
-                int32_t tile_relative_x = x - tile_x * TILE_WIDTH_IN_PIXELS;
-                int32_t tile_relative_y = y - tile_y * TILE_WIDTH_IN_PIXELS;
-                int32_t rowmajor_i = y * w + x;
-
-                int32_t xmask = TILE_X_SWIZZLE_MASK;
-                int32_t ymask = TILE_Y_SWIZZLE_MASK;
-                int32_t xbits = pdep_u32(x, xmask);
-                int32_t ybits = pdep_u32(y, ymask);
-                int32_t swizzled_i = topleft_pixel_i + xbits + ybits;
-
-                assert(rowmajor_data[rowmajor_i * 4 + 0] == ((fb->backbuffer[swizzled_i] & 0x00FF0000) >> 16));
-                assert(rowmajor_data[rowmajor_i * 4 + 1] == ((fb->backbuffer[swizzled_i] & 0x0000FF00) >> 8));
-                assert(rowmajor_data[rowmajor_i * 4 + 2] == ((fb->backbuffer[swizzled_i] & 0x000000FF) >> 0));
-                assert(rowmajor_data[rowmajor_i * 4 + 3] == ((fb->backbuffer[swizzled_i] & 0xFF000000) >> 24));
-            }
-        }
-
-        // do the test again but this time readback just one tile (that isn't the top left one)
-        framebuffer_pack_row_major(fb, TILE_WIDTH_IN_PIXELS, TILE_WIDTH_IN_PIXELS, TILE_WIDTH_IN_PIXELS, TILE_WIDTH_IN_PIXELS, pixelformat_r8g8b8a8_unorm, rowmajor_data);
-
-        for (int32_t rel_y = 0; rel_y < TILE_WIDTH_IN_PIXELS; rel_y++)
-        {
-            int32_t y = TILE_WIDTH_IN_PIXELS + rel_y;
-
-            int32_t tile_y = y / TILE_WIDTH_IN_PIXELS;
-
-            for (int32_t rel_x = 0; rel_x < TILE_WIDTH_IN_PIXELS; rel_x++)
-            {
-                int32_t x = TILE_WIDTH_IN_PIXELS + rel_x;
-
-                int32_t tile_x = x / TILE_WIDTH_IN_PIXELS;
-                int32_t tile_i = tile_y * (fb->pixels_per_row_of_tiles / PIXELS_PER_TILE) + tile_x;
-                int32_t topleft_pixel_i = tile_i * PIXELS_PER_TILE;
-
-                int32_t tile_relative_x = x - tile_x * TILE_WIDTH_IN_PIXELS;
-                int32_t tile_relative_y = y - tile_y * TILE_WIDTH_IN_PIXELS;
-                int32_t rowmajor_i = tile_relative_y * TILE_WIDTH_IN_PIXELS + tile_relative_x;
-
-                int32_t xmask = TILE_X_SWIZZLE_MASK;
-                int32_t ymask = TILE_Y_SWIZZLE_MASK;
-                int32_t xbits = pdep_u32(x, xmask);
-                int32_t ybits = pdep_u32(y, ymask);
-                int32_t swizzled_i = topleft_pixel_i + xbits + ybits;
-
-                assert(rowmajor_data[rowmajor_i * 4 + 0] == ((fb->backbuffer[swizzled_i] & 0x00FF0000) >> 16));
-                assert(rowmajor_data[rowmajor_i * 4 + 1] == ((fb->backbuffer[swizzled_i] & 0x0000FF00) >> 8));
-                assert(rowmajor_data[rowmajor_i * 4 + 2] == ((fb->backbuffer[swizzled_i] & 0x000000FF) >> 0));
-                assert(rowmajor_data[rowmajor_i * 4 + 3] == ((fb->backbuffer[swizzled_i] & 0xFF000000) >> 24));
-            }
-        }
-
-        free(rowmajor_data);
-        delete_framebuffer(fb);
-    }
-
-    // large triangle test
-    {
-        int32_t fbwidth = TILE_WIDTH_IN_PIXELS * 3;
-        int32_t fbheight = TILE_WIDTH_IN_PIXELS * 3;
-        framebuffer_t* fb = new_framebuffer(fbwidth, fbheight);
-
-        int32_t radius = s1516_div(2 << 16, 2 << 16);
-
-        int32_t verts[] = {
-            (-1 << 16), (1 << 16), 0, 1 << 16,
-            (-1 << 16) + radius, (1 << 16), 0, 1 << 16,
-            (-1 << 16), (1 << 16) - radius, 0, 1 << 16
-        };
-
-        rasterizer_set_color(0xFFFF00FF);
-        rasterizer_draw(fb, verts, 3);
-
-        // make sure all caches are flushed and yada yada
-        framebuffer_resolve(fb);
-
-        // convert framebuffer from bgra to rgba for stbi_image_write
-        {
-            uint8_t* rgba8_pixels = (uint8_t*)malloc(fbwidth * fbheight * 4);
-            assert(rgba8_pixels);
-
-            // readback framebuffer contents
-            framebuffer_pack_row_major(fb, 0, 0, fbwidth, fbheight, pixelformat_r8g8b8a8_unorm, rgba8_pixels);
-
-            if (!stbi_write_png("output.png", fbwidth, fbheight, 4, rgba8_pixels, fbwidth * 4))
-            {
-                fprintf(stderr, "Failed to write image\n");
-                exit(1);
-            }
-
-            free(rgba8_pixels);
-        }
-
-        system("output.png");
-
-        delete_framebuffer(fb);
-    }
-
-    // small triangles test
-    {
-        int32_t fbwidth = TILE_WIDTH_IN_PIXELS * 2;
-        int32_t fbheight = TILE_WIDTH_IN_PIXELS * 2;
-        framebuffer_t* fb = new_framebuffer(fbwidth, fbheight);
-
-        int32_t radius = s1516_div(2 << 16, 4 << 16);
-        int32_t half_radius = s1516_div(radius, 2 << 16);
-
-        int32_t verts[] = {
-            // triangle at top left of framebuffer
-            (-1 << 16), (1 << 16), 0, 1 << 16,
-            (-1 << 16) + radius, (1 << 16), 0, 1 << 16,
-            (-1 << 16), (1 << 16) - radius, 0, 1 << 16,
-
-            // triangle in between the first two tiles
-            (0 << 16) - half_radius, (1 << 16), 0, 1 << 16,
-            (0 << 16) + half_radius, (1 << 16), 0, 1 << 16,
-            (0 << 16) - half_radius, (1 << 16) - radius, 0, 1 << 16,
-
-            // triangle in between the first four tiles
-            (0 << 16) - half_radius, (0 << 16) + half_radius, 0, 1 << 16,
-            (0 << 16) + half_radius, (0 << 16) + half_radius, 0, 1 << 16,
-            (0 << 16) - half_radius, (0 << 16) - half_radius, 0, 1 << 16,
-        };
-
-        rasterizer_set_color(0xFFFF00FF);
-        rasterizer_draw(fb, verts, sizeof(verts)/sizeof(*verts)/4);
-
-        // make sure all caches are flushed and yada yada
-        framebuffer_resolve(fb);
-
-        // convert framebuffer from bgra to rgba for stbi_image_write
-        {
-            uint8_t* rgba8_pixels = (uint8_t*)malloc(fbwidth * fbheight * 4);
-            assert(rgba8_pixels);
-
-            // readback framebuffer contents
-            framebuffer_pack_row_major(fb, 0, 0, fbwidth, fbheight, pixelformat_r8g8b8a8_unorm, rgba8_pixels);
-
-            if (!stbi_write_png("output.png", fbwidth, fbheight, 4, rgba8_pixels, fbwidth * 4))
-            {
-                fprintf(stderr, "Failed to write image\n");
-                exit(1);
-            }
-
-            free(rgba8_pixels);
-        }
-
-        system("output.png");
-
-        delete_framebuffer(fb);
-    }
-}
-#endif
