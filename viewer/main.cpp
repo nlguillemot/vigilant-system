@@ -15,6 +15,7 @@
 #include <DirectXMath.h>
 
 #include <glloader.h>
+#include <wglext.h>
 
 #include <imgui.h>
 #include <imgui_impl_win32_gl.h>
@@ -70,6 +71,61 @@ void init_window(int32_t width, int32_t height)
     wc.lpszClassName = TEXT("WindowClass");
     RegisterClassEx(&wc);
 
+    PIXELFORMATDESCRIPTOR pfd;
+    ZeroMemory(&pfd, sizeof(pfd));
+    pfd.nSize = sizeof(pfd);
+    pfd.nVersion = 1;
+    pfd.dwFlags = PFD_SUPPORT_OPENGL;
+
+    bool ok;
+
+    HWND dummy_hWnd = CreateWindowEx(0, TEXT("WindowClass"), 0, 0, 0, 0, 0, 0, 0, 0, GetModuleHandle(0), 0);
+    HDC dummy_hDC = GetDC(dummy_hWnd);
+    assert(dummy_hDC);
+
+    int chosenPixelFormat = ChoosePixelFormat(dummy_hDC, &pfd);
+    ok = !!SetPixelFormat(dummy_hDC, chosenPixelFormat, &pfd);
+    assert(ok);
+
+    HGLRC dummy_hGLRC = wglCreateContext(dummy_hDC);
+    assert(dummy_hGLRC);
+    ok = !!wglMakeCurrent(dummy_hDC, dummy_hGLRC);
+    assert(ok);
+
+    PFNWGLCHOOSEPIXELFORMATARBPROC wglChoosePixelFormatARB = (PFNWGLCHOOSEPIXELFORMATARBPROC)wglGetProcAddress("wglChoosePixelFormatARB");
+    assert(wglChoosePixelFormatARB);
+    PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB = (PFNWGLCREATECONTEXTATTRIBSARBPROC)wglGetProcAddress("wglCreateContextAttribsARB");
+    assert(wglCreateContextAttribsARB);
+     
+    int pfAttribs[] = {
+        WGL_DRAW_TO_WINDOW_ARB,   GL_TRUE,
+        WGL_ACCELERATION_ARB,     WGL_FULL_ACCELERATION_ARB,
+        WGL_SUPPORT_OPENGL_ARB,   GL_TRUE,
+        WGL_DOUBLE_BUFFER_ARB,    GL_TRUE,
+        WGL_RED_BITS_ARB,         8,
+        WGL_GREEN_BITS_ARB,       8,
+        WGL_BLUE_BITS_ARB,        8,
+        WGL_ALPHA_BITS_ARB,       8,
+        WGL_PIXEL_TYPE_ARB,       WGL_TYPE_RGBA_ARB,
+        WGL_COLOR_BITS_ARB,       32,
+        0
+    };
+
+    UINT numSupportedFormats;
+    ok = !!wglChoosePixelFormatARB(dummy_hDC, pfAttribs, 0, 1, &chosenPixelFormat, &numSupportedFormats);
+    assert(ok);
+
+    DescribePixelFormat(dummy_hDC, chosenPixelFormat, sizeof(pfd), &pfd);
+
+    ok = !!wglMakeCurrent(0, 0);
+    assert(ok);
+
+    ok = !!wglDeleteContext(dummy_hGLRC);
+    assert(ok);
+
+    ok = !!DestroyWindow(dummy_hWnd);
+    assert(ok);
+
     DWORD dwStyle = WS_OVERLAPPEDWINDOW & ~(WS_MAXIMIZEBOX | WS_THICKFRAME);
     RECT wr = { 0, 0, width, height };
     AdjustWindowRect(&wr, dwStyle, FALSE);
@@ -80,23 +136,23 @@ void init_window(int32_t width, int32_t height)
         CW_USEDEFAULT, CW_USEDEFAULT, wr.right - wr.left, wr.bottom - wr.top,
         0, 0, GetModuleHandle(NULL), 0);
 
-    PIXELFORMATDESCRIPTOR pfd;
-    ZeroMemory(&pfd, sizeof(pfd));
-    pfd.nSize = sizeof(pfd);
-    pfd.nVersion = 1;
-    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
-    pfd.iPixelType = PFD_TYPE_RGBA;
-    pfd.cColorBits = 32;
-    pfd.iLayerType = PFD_MAIN_PLANE;
-
     HDC hDC = GetDC(g_hWnd);
-
-    int chosenPixelFormat = ChoosePixelFormat(hDC, &pfd);
     SetPixelFormat(hDC, chosenPixelFormat, &pfd);
 
-    HGLRC hGLRC = wglCreateContext(hDC);
-    wglMakeCurrent(hDC, hGLRC);
+    int contextAttribs[] = {
+        WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
+        WGL_CONTEXT_MINOR_VERSION_ARB, 3,
+#ifdef _DEBUG
+        WGL_CONTEXT_FLAGS_ARB, GL_CONTEXT_FLAG_DEBUG_BIT,
+#endif
+        // note: assuming WGL_ARB_create_context_profile is available. Should instead check for it.
+        WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB,
+        0
+    };
 
+    HGLRC hGLRC = wglCreateContextAttribsARB(hDC, 0, contextAttribs);
+    wglMakeCurrent(hDC, hGLRC);
+    
     LoadGLProcs();
 
     ShowWindow(g_hWnd, SW_SHOWNORMAL);
@@ -340,6 +396,9 @@ int main()
     uint8_t* rgba8_pixels = (uint8_t*)malloc(fbwidth * fbheight * 4);
     assert(rgba8_pixels);
 
+    uint8_t* rgba8_pixels_dirty = (uint8_t*)malloc(fbwidth * fbheight * 4);
+    assert(rgba8_pixels_dirty);
+
     uint32_t* d32_pixels = (uint32_t*)malloc(fbwidth * fbheight * sizeof(uint32_t));
     assert(d32_pixels);
 
@@ -462,6 +521,7 @@ int main()
 
         POINT cursor;
         GetCursorPos(&cursor);
+        ScreenToClient(g_hWnd, &cursor);
 
         // Camera update
         {
@@ -504,7 +564,9 @@ int main()
             scene_set_view(sc, view_s1516);
         }
 
-        SetCursorPos(cursor.x + g_PendingMouseWarpRight, cursor.y - g_PendingMouseWarpUp);
+        POINT screencursor = cursor;
+        ClientToScreen(g_hWnd, &screencursor);
+        SetCursorPos(screencursor.x + g_PendingMouseWarpRight, screencursor.y - g_PendingMouseWarpUp);
         g_PendingMouseWarpRight = 0;
         g_PendingMouseWarpUp = 0;
 
@@ -569,24 +631,28 @@ int main()
             {
                 for (int32_t col = 0; col < fbwidth; col++)
                 {
-                    uint32_t tmp = *(uint32_t*)&rgba8_pixels[(row * fbwidth + col) * 4];
-                    *(uint32_t*)&rgba8_pixels[(row * fbwidth + col) * 4] = *(uint32_t*)&rgba8_pixels[((fbheight - row - 1) * fbwidth + col) * 4];
-                    *(uint32_t*)&rgba8_pixels[((fbheight - row - 1) * fbwidth + col) * 4] = tmp;
+                    *(uint32_t*)&rgba8_pixels_dirty[(row * fbwidth + col) * 4] = *(uint32_t*)&rgba8_pixels[((fbheight - row - 1) * fbwidth + col) * 4];
+                    *(uint32_t*)&rgba8_pixels_dirty[((fbheight - row - 1) * fbwidth + col) * 4] = *(uint32_t*)&rgba8_pixels[(row * fbwidth + col) * 4];
                 }
             }
 
-            glDrawPixels(fbwidth, fbheight, GL_RGBA, GL_UNSIGNED_BYTE, rgba8_pixels);
-
-            // flip again so the rgba8_pixels is coherent between frames
-            for (int32_t row = 0; row < fbheight / 2; row++)
+            // Render box around zoom quad
+            for (int y = cursor.y - 1; y < cursor.y - 1 + kZoomTextureWidth + 2; y++)
             {
-                for (int32_t col = 0; col < fbwidth; col++)
+                for (int x = cursor.x - 1; x < cursor.x - 1 + kZoomTextureWidth + 2; x++)
                 {
-                    uint32_t tmp = *(uint32_t*)&rgba8_pixels[(row * fbwidth + col) * 4];
-                    *(uint32_t*)&rgba8_pixels[(row * fbwidth + col) * 4] = *(uint32_t*)&rgba8_pixels[((fbheight - row - 1) * fbwidth + col) * 4];
-                    *(uint32_t*)&rgba8_pixels[((fbheight - row - 1) * fbwidth + col) * 4] = tmp;
+                    if (y >= 0 && y < fbheight && x >= 0 && x < fbwidth)
+                    {
+                        if (y == cursor.y - 1 || y == cursor.y - 1 + kZoomTextureWidth + 1 ||
+                            x == cursor.x - 1 || x == cursor.x - 1 + kZoomTextureWidth + 1)
+                        {
+                            *(uint32_t*)&rgba8_pixels_dirty[((fbheight - y - 1) * fbwidth + x) * 4] = 0xFFFFFFFF;
+                        }
+                    }
                 }
             }
+
+            glDrawPixels(fbwidth, fbheight, GL_RGBA, GL_UNSIGNED_BYTE, rgba8_pixels_dirty);
         }
 
         if (show_perfheatmap)
@@ -657,74 +723,69 @@ int main()
         ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiSetCond_Once);
         if (ImGui::Begin("Info"))
         {
-            POINT cursorpos;
-            if (GetCursorPos(&cursorpos) && ScreenToClient(g_hWnd, &cursorpos))
+            if (cursor.x >= 0 && cursor.x < fbwidth && cursor.y >= 0 && cursor.y < fbheight)
             {
-                ImGui::Text("CursorPos: (%d, %d)", cursorpos.x, cursorpos.y);
+                ImGui::Text("CursorPos: (%d, %d)", cursor.x, cursor.y);
                 
-                if (cursorpos.x >= 0 && cursorpos.x < fbwidth &&
-                    cursorpos.y >= 0 && cursorpos.y < fbheight)
+                int tile_y = cursor.y / 128;
+                int tile_x = cursor.x / 128;
+                int width_in_tiles = (fbwidth + 127) / 128;
+                int tile_i = tile_y * width_in_tiles + tile_x;
+                ImGui::Text("TileID: %d", tile_i);
+                int tile_start = tile_i * 128 * 128;
+                int swizzled = pdep_u32(cursor.x, 0x55555555 & (128 * 128 - 1));
+                swizzled |= pdep_u32(cursor.y, 0xAAAAAAAA & (128 * 128 - 1));
+                ImGui::Text("Swizzled pixel: %d + %d = %d", tile_start, swizzled, tile_start + swizzled);
+
+                uint8_t r = rgba8_pixels[(cursor.y * fbwidth + cursor.x) * 4 + 0];
+                uint8_t g = rgba8_pixels[(cursor.y * fbwidth + cursor.x) * 4 + 1];
+                uint8_t b = rgba8_pixels[(cursor.y * fbwidth + cursor.x) * 4 + 2];
+                uint8_t a = rgba8_pixels[(cursor.y * fbwidth + cursor.x) * 4 + 3];
+                ImGui::Text("Pixel color (ARGB): 0x%08X", (a << 24) | (r << 16) | (g << 8) | b);
+                ImGui::SameLine();
+
+                ImVec4 fCol;
+                fCol.x = (float)(r / 255.0f);
+                fCol.y = (float)(g / 255.0f);
+                fCol.z = (float)(b / 255.0f);
+                fCol.w = (float)(a / 255.0f);
+                ImGui::ColorButton(fCol, true);
+
+                uint32_t d32 = d32_pixels[cursor.y * fbwidth + cursor.x];
+                ImGui::Text("Pixel depth: 0x%X", d32);
+
+                for (int y = 0; y < kZoomTextureWidth; y++)
                 {
-                    int tile_y = cursorpos.y / 128;
-                    int tile_x = cursorpos.x / 128;
-                    int width_in_tiles = (fbwidth + 127) / 128;
-                    int tile_i = tile_y * width_in_tiles + tile_x;
-                    ImGui::Text("TileID: %d", tile_i);
-                    int tile_start = tile_i * 128 * 128;
-                    int swizzled = pdep_u32(cursorpos.x, 0x55555555 & (128 * 128 - 1));
-                    swizzled |= pdep_u32(cursorpos.y, 0xAAAAAAAA & (128 * 128 - 1));
-                    ImGui::Text("Swizzled pixel: %d + %d = %d", tile_start, swizzled, tile_start + swizzled);
-
-                    uint8_t r = rgba8_pixels[(cursorpos.y * fbwidth + cursorpos.x) * 4 + 0];
-                    uint8_t g = rgba8_pixels[(cursorpos.y * fbwidth + cursorpos.x) * 4 + 1];
-                    uint8_t b = rgba8_pixels[(cursorpos.y * fbwidth + cursorpos.x) * 4 + 2];
-                    uint8_t a = rgba8_pixels[(cursorpos.y * fbwidth + cursorpos.x) * 4 + 3];
-                    ImGui::Text("Pixel color (ARGB): 0x%08X", (a << 24) | (r << 16) | (g << 8) | b);
-                    ImGui::SameLine();
-
-                    ImVec4 fCol;
-                    fCol.x = (float)(r / 255.0f);
-                    fCol.y = (float)(g / 255.0f);
-                    fCol.z = (float)(b / 255.0f);
-                    fCol.w = (float)(a / 255.0f);
-                    ImGui::ColorButton(fCol, true);
-
-                    uint32_t d32 = d32_pixels[cursorpos.y * fbwidth + cursorpos.x];
-                    ImGui::Text("Pixel depth: 0x%X", d32);
-
-                    for (int y = 0; y < kZoomTextureWidth; y++)
+                    for (int x = 0; x < kZoomTextureWidth; x++)
                     {
-                        for (int x = 0; x < kZoomTextureWidth; x++)
-                        {
-                            uint8_t* dst = &zoomImagePixels[(y * kZoomTextureWidth + x) * 4];
+                        uint8_t* dst = &zoomImagePixels[(y * kZoomTextureWidth + x) * 4];
 
-                            if ((cursorpos.y + y) >= 0 && (cursorpos.y + y) < fbheight && (cursorpos.x + x) >= 0 && (cursorpos.x + x) < fbwidth)
-                            {
-                                uint8_t* src = &rgba8_pixels[((cursorpos.y + y) * fbwidth + (cursorpos.x + x)) * 4];
-                                dst[0] = src[0];
-                                dst[1] = src[1];
-                                dst[2] = src[2];
-                                dst[3] = src[3];
-                            }
-                            else
-                            {
-                                dst[0] = 0;
-                                dst[1] = 0;
-                                dst[2] = 0;
-                                dst[3] = 0xFF;
-                            }
+                        if ((cursor.y + y) >= 0 && (cursor.y + y) < fbheight && (cursor.x + x) >= 0 && (cursor.x + x) < fbwidth)
+                        {
+                            uint8_t* src = &rgba8_pixels[((cursor.y + y) * fbwidth + (cursor.x + x)) * 4];
+                            dst[0] = src[0];
+                            dst[1] = src[1];
+                            dst[2] = src[2];
+                            dst[3] = src[3];
+                        }
+                        else
+                        {
+                            dst[0] = 0;
+                            dst[1] = 0;
+                            dst[2] = 0;
+                            dst[3] = 0xFF;
                         }
                     }
-
-                    glBindTexture(GL_TEXTURE_2D, zoomTexture);
-                    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kZoomTextureWidth, kZoomTextureWidth, GL_RGBA, GL_UNSIGNED_BYTE, zoomImagePixels);
-                    glBindTexture(GL_TEXTURE_2D, 0);
-                    
-                    float imsize = (float)kZoomTextureWidth * 8;
-                    ImGui::Image((ImTextureID)(intptr_t)zoomTexture, ImVec2(imsize, imsize));
-                    ImGui::SameLine();
-                    ImGui::Text("Cursor zoom\n(Fine control: hjkl)");
                 }
+
+                glBindTexture(GL_TEXTURE_2D, zoomTexture);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kZoomTextureWidth, kZoomTextureWidth, GL_RGBA, GL_UNSIGNED_BYTE, zoomImagePixels);
+                glBindTexture(GL_TEXTURE_2D, 0);
+                    
+                float imsize = (float)kZoomTextureWidth * 8;
+                ImGui::Image((ImTextureID)(intptr_t)zoomTexture, ImVec2(imsize, imsize));
+                ImGui::SameLine();
+                ImGui::Text("Cursor zoom\n(Fine control: hjkl)");
             }
             
             LONGLONG raster_time = after_raster.QuadPart - before_raster.QuadPart;
