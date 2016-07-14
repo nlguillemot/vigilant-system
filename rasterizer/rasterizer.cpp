@@ -658,10 +658,10 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
                 }
 
                 // compute non-perspective-correct barycentrics for vertices 1 and 2
-                 int32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 16 >> 1;
+                 int32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 16;
                  if (num_test_edges < 3)
                      u = 0x0;
-                 int32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 16 >> 1;
+                 int32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 16;
                  if (num_test_edges < 1)
                      v = 0x0;
                  assert(u < 0x8000);
@@ -671,8 +671,6 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
                  int32_t w = 0x7FFF - u - v;
 
                  // compute interpolated depth
-                 // TODO? Might want to saturate here.
-                 // Can probably get 1 more bit of precision if I handle a overflow bit properly? FMA magic?
                  uint32_t pixel_Z = (drawcmd->vert_Zs[0] << 15)
                      + u * (drawcmd->vert_Zs[1] - drawcmd->vert_Zs[0])
                      + v * (drawcmd->vert_Zs[2] - drawcmd->vert_Zs[0]);
@@ -1842,7 +1840,7 @@ commonsetup_end:
 
         assert(rcp_triarea2_mantissa < 0x10000);
         rcp_triarea2_mantissa = rcp_triarea2_mantissa & 0xFFFF;
-        uint32_t rcp_triarea2_exponent = 127 + triarea2_mantissa_rshift - rcp_triarea2_mantissa_rshift;
+        uint32_t rcp_triarea2_exponent = 127 + triarea2_mantissa_rshift - rcp_triarea2_mantissa_rshift + 1;
         uint32_t rcp_triarea2 = (rcp_triarea2_exponent << 16) | rcp_triarea2_mantissa;
 
         int64_t edges[3];
@@ -1955,6 +1953,7 @@ commonsetup_end:
                         drawtilecmd.edges[v] = (int32_t)tile_i_edges[rotated_v];
                         drawtilecmd.edge_dxs[v] = (int32_t)edge_dxs[rotated_v];
                         drawtilecmd.edge_dys[v] = (int32_t)edge_dys[rotated_v];
+                        drawtilecmd.vert_Zs[v] = verts[rotated_v].z;
                     }
 
                     drawtilecmd.min_Z = min_Z;
