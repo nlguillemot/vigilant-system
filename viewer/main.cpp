@@ -25,13 +25,25 @@
 #pragma comment(lib, "OpenGL32.lib")
 #pragma comment(lib, "glu32.lib")
 
+int g_PendingMouseWarpUp;
+int g_PendingMouseWarpRight;
+
 LRESULT CALLBACK MyWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
-    if (ImGui_ImplWin32GL_WndProcHandler(hWnd, message, wParam, lParam))
-        return true;
+    ImGui_ImplWin32GL_WndProcHandler(hWnd, message, wParam, lParam);
 
     switch (message)
     {
+    case WM_KEYDOWN:
+        if (wParam == 'H')
+            g_PendingMouseWarpRight--;
+        if (wParam == 'J')
+            g_PendingMouseWarpUp--;
+        if (wParam == 'K')
+            g_PendingMouseWarpUp++;
+        if (wParam == 'L')
+            g_PendingMouseWarpRight++;
+        break;
     case WM_CLOSE:
         ExitProcess(0);
         return 0;
@@ -327,6 +339,20 @@ int main()
     uint8_t* rgba8_pixels = (uint8_t*)malloc(fbwidth * fbheight * 4);
     assert(rgba8_pixels);
 
+    uint32_t* d32_pixels = (uint32_t*)malloc(fbwidth * fbheight * sizeof(uint32_t));
+    assert(d32_pixels);
+
+    const int kZoomTextureWidth = 32;
+    GLuint zoomTexture;
+    glGenTextures(1, &zoomTexture);
+    glBindTexture(GL_TEXTURE_2D, zoomTexture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kZoomTextureWidth, kZoomTextureWidth);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    uint8_t* zoomImagePixels = (uint8_t*)malloc(kZoomTextureWidth * kZoomTextureWidth * 4);
+    assert(zoomImagePixels);
+
     // readback framebuffer contents
     framebuffer_t* fb = renderer_get_framebuffer(rd);
 
@@ -477,6 +503,10 @@ int main()
             scene_set_view(sc, view_s1516);
         }
 
+        SetCursorPos(cursor.x + g_PendingMouseWarpRight, cursor.y - g_PendingMouseWarpUp);
+        g_PendingMouseWarpRight = 0;
+        g_PendingMouseWarpUp = 0;
+
         LARGE_INTEGER before_raster, after_raster;
         QueryPerformanceCounter(&before_raster);
         renderer_reset_perfcounters(rd);
@@ -488,14 +518,8 @@ int main()
         // render rasterization to screen
         {
             framebuffer_t* fb = renderer_get_framebuffer(rd);
-            if (show_depth)
-            {
-                framebuffer_pack_row_major(fb, attachment_depth, 0, 0, fbwidth, fbheight, pixelformat_r32_unorm, rgba8_pixels);
-            }
-            else
-            {
-                framebuffer_pack_row_major(fb, attachment_color0, 0, 0, fbwidth, fbheight, pixelformat_r8g8b8a8_unorm, rgba8_pixels);
-            }
+            framebuffer_pack_row_major(fb, attachment_depth, 0, 0, fbwidth, fbheight, pixelformat_r32_unorm, d32_pixels);
+            framebuffer_pack_row_major(fb, attachment_color0, 0, 0, fbwidth, fbheight, pixelformat_r8g8b8a8_unorm, rgba8_pixels);
 
             if (show_depth)
             {
@@ -503,7 +527,7 @@ int main()
                 uint32_t min_depth = -1, max_depth = -1;
                 for (int32_t i = 0; i < fbwidth * fbheight; i++)
                 {
-                    uint32_t src = *(uint32_t*)&rgba8_pixels[4 * i];
+                    uint32_t src = d32_pixels[i];
                     if (src != -1)
                     {
                         if (min_depth == -1 || src < min_depth)
@@ -521,7 +545,7 @@ int main()
                 for (int32_t i = 0; i < fbwidth * fbheight; i++)
                 {
                     uint32_t* dst = (uint32_t*)&rgba8_pixels[4 * i];
-                    uint32_t src = *dst;
+                    uint32_t src = d32_pixels[i];
                     if (src == -1 || min_depth == -1)
                     {
                         *dst = 0xFF000000;
@@ -552,7 +576,7 @@ int main()
 
             glDrawPixels(fbwidth, fbheight, GL_RGBA, GL_UNSIGNED_BYTE, rgba8_pixels);
 
-            // flip again so the rgba8_pixels is coherent between frames (easier debugging)
+            // flip again so the rgba8_pixels is coherent between frames
             for (int32_t row = 0; row < fbheight / 2; row++)
             {
                 for (int32_t col = 0; col < fbwidth; col++)
@@ -662,6 +686,42 @@ int main()
                     fCol.z = (float)(b / 255.0f);
                     fCol.w = (float)(a / 255.0f);
                     ImGui::ColorButton(fCol, true);
+
+                    uint32_t d32 = d32_pixels[cursorpos.y * fbwidth + cursorpos.x];
+                    ImGui::Text("Pixel depth: 0x%X", d32);
+
+                    for (int y = 0; y < kZoomTextureWidth; y++)
+                    {
+                        for (int x = 0; x < kZoomTextureWidth; x++)
+                        {
+                            uint8_t* dst = &zoomImagePixels[(y * kZoomTextureWidth + x) * 4];
+
+                            if ((cursorpos.y + y) >= 0 && (cursorpos.y + y) < fbheight && (cursorpos.x + x) >= 0 && (cursorpos.x + x) < fbwidth)
+                            {
+                                uint8_t* src = &rgba8_pixels[((cursorpos.y + y) * fbwidth + (cursorpos.x + x)) * 4];
+                                dst[0] = src[0];
+                                dst[1] = src[1];
+                                dst[2] = src[2];
+                                dst[3] = src[3];
+                            }
+                            else
+                            {
+                                dst[0] = 0;
+                                dst[1] = 0;
+                                dst[2] = 0;
+                                dst[3] = 0xFF;
+                            }
+                        }
+                    }
+
+                    glBindTexture(GL_TEXTURE_2D, zoomTexture);
+                    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kZoomTextureWidth, kZoomTextureWidth, GL_RGBA, GL_UNSIGNED_BYTE, zoomImagePixels);
+                    glBindTexture(GL_TEXTURE_2D, 0);
+                    
+                    float imsize = (float)kZoomTextureWidth * 2;
+                    ImGui::Image((ImTextureID)(intptr_t)zoomTexture, ImVec2(imsize, imsize));
+                    ImGui::SameLine();
+                    ImGui::Text("Cursor zoom\n(Fine control: hjkl)");
                 }
             }
             
@@ -778,6 +838,8 @@ int main()
     }
 
     free(rgba8_pixels);
+    free(d32_pixels);
+    free(zoomImagePixels);
 
     delete_scene(sc);
     delete_renderer(rd);

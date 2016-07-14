@@ -470,8 +470,8 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
 
             if (!pixel_discarded)
             {
-                int32_t rcp_triarea2_mantissa = (drawcmd->rcp_triarea2 & 0xFF);
-                int32_t rcp_triarea2_exponent = (drawcmd->rcp_triarea2 & 0xFF00) >> 8;
+                int32_t rcp_triarea2_mantissa = (drawcmd->rcp_triarea2 & 0xFFFF);
+                int32_t rcp_triarea2_exponent = (drawcmd->rcp_triarea2 & 0xFF0000) >> 16;
                 int32_t rcp_triarea2_rshift = rcp_triarea2_exponent - 127;
 
                 int32_t shifted_e2 = -edges_row[2];
@@ -488,8 +488,8 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
                 }
 
                 // compute non-perspective-correct barycentrics for vertices 1 and 2
-                int32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 1;
-                int32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 1;
+                int32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 16;
+                int32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 16;
                 assert(u < 0x8000);
                 assert(v < 0x8000);
                 
@@ -1508,9 +1508,9 @@ commonsetup_end:
             rcp_ws[2] = tmp_rcp_w;
         }
 
-        // compute 1/(2triarea) and convert to a pseudo 8.8 floating point value
+        // compute 1/(2triarea) and convert to a pseudo 8.16 floating point value
         int32_t triarea2_lzcnt = lzcnt(triarea2);
-        int32_t triarea2_mantissa_rshift = (31 - 8) - triarea2_lzcnt;
+        int32_t triarea2_mantissa_rshift = (31 - 16) - triarea2_lzcnt;
         int32_t triarea2_mantissa;
         if (triarea2_mantissa_rshift < 0)
             triarea2_mantissa = triarea2 << -triarea2_mantissa_rshift;
@@ -1518,21 +1518,21 @@ commonsetup_end:
             triarea2_mantissa = triarea2 >> triarea2_mantissa_rshift;
         
         // perform the reciprocal
-        // note: triarea2_mantissa is currently normalized as 1.8, and so is the numerator of the division (before being adjusted for rounding)
-        int32_t rcp_triarea2_mantissa = 0xFFFF / triarea2_mantissa;
+        // note: triarea2_mantissa is currently normalized as 1.16, and so is the numerator of the division (before being adjusted for rounding)
+        int32_t rcp_triarea2_mantissa = 0xFFFFFFFF / triarea2_mantissa;
         assert(rcp_triarea2_mantissa != 0);
         
-        // ensure the mantissa is denormalized so it fits in 8 bits
-        int32_t rcp_triarea2_mantissa_rshift = (31 - 7) - lzcnt(rcp_triarea2_mantissa);
+        // ensure the mantissa is denormalized so it fits in 16 bits
+        int32_t rcp_triarea2_mantissa_rshift = (31 - 15) - lzcnt(rcp_triarea2_mantissa);
         if (rcp_triarea2_mantissa_rshift < 0)
             rcp_triarea2_mantissa = rcp_triarea2_mantissa << -rcp_triarea2_mantissa_rshift;
         else
             rcp_triarea2_mantissa = rcp_triarea2_mantissa >> rcp_triarea2_mantissa_rshift;
 
-        assert(rcp_triarea2_mantissa < 0x100);
-        rcp_triarea2_mantissa = rcp_triarea2_mantissa & 0xFF;
-        uint32_t rcp_triarea2_exponent = 127 + triarea2_mantissa_rshift - rcp_triarea2_mantissa_rshift;
-        uint32_t rcp_triarea2 = (rcp_triarea2_exponent << 8) | rcp_triarea2_mantissa;
+        assert(rcp_triarea2_mantissa < 0x10000);
+        rcp_triarea2_mantissa = rcp_triarea2_mantissa & 0xFFFF;
+        uint32_t rcp_triarea2_exponent = 127 + triarea2_mantissa_rshift - rcp_triarea2_mantissa_rshift + 1;
+        uint32_t rcp_triarea2 = (rcp_triarea2_exponent << 16) | rcp_triarea2_mantissa;
 
         drawsmalltricmd.rcp_triarea2 = rcp_triarea2;
 
