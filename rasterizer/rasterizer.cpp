@@ -497,8 +497,6 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
                 int32_t w = 0x7FFF - u - v;
 
                 // compute interpolated depth
-                // TODO? Might want to saturate here.
-                // Can probably get 1 more bit of precision if I handle a overflow bit properly? FMA magic?
                 uint32_t pixel_Z = (drawcmd->vert_Zs[0] << 15)
                     + u * (drawcmd->vert_Zs[1] - drawcmd->vert_Zs[0])
                     + v * (drawcmd->vert_Zs[2] - drawcmd->vert_Zs[0]);

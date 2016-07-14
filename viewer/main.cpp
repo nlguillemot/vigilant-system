@@ -653,6 +653,7 @@ int main()
             glDisable(GL_BLEND);
         }
 
+        ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiSetCond_Once);
         if (ImGui::Begin("Info"))
         {
             POINT cursorpos;
