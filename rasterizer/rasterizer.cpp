@@ -313,6 +313,7 @@ typedef struct tilecmd_drawtile_t
     int32_t edges[3];
     int32_t edge_dxs[3];
     int32_t edge_dys[3];
+    int32_t shifted_es[3];
     int32_t vert_Zs[3];
     uint32_t max_Z, min_Z;
     uint32_t rcp_triarea2;
@@ -487,14 +488,21 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
                     shifted_e0 = shifted_e0 >> rcp_triarea2_rshift;
                 }
 
+                assert((shifted_e0 & 0xFFFF) == shifted_e0);
+                assert((shifted_e2 & 0xFFFF) == shifted_e2);
+                assert((rcp_triarea2_mantissa & 0xFFFF) == rcp_triarea2_mantissa);
+
                 // compute non-perspective-correct barycentrics for vertices 1 and 2
                 int32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 16;
                 int32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 16;
-                assert(u < 0x8000);
-                assert(v < 0x8000);
+                assert(u >= 0 && u <= 0x8000);
+                assert(v >= 0 && v <= 0x8000);
                 
                 // not related to vertex w. Just third barycentric. Bad naming.
-                int32_t w = 0x7FFF - u - v;
+                int32_t w = 0x8000 - u - v;
+                assert(w >= 0 && w <= 0x8000);
+
+                assert(u + v + w == 0x8000);
 
                 // compute interpolated depth
                 uint32_t pixel_Z = (drawcmd->vert_Zs[0] << 15)
@@ -510,7 +518,7 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
                 if (pixel_Z < fb->depthbuffer[dst_i])
                 {
                     fb->depthbuffer[dst_i] = pixel_Z;
-                    fb->backbuffer[dst_i] = (0xFF << 24) | ((w/0x80) << 16) | ((u/ 0x80) << 8) | (v/ 0x80);
+                    fb->backbuffer[dst_i] = (0xFF << 24) | ((w * 0xFF / 0x8000) << 16) | ((u * 0xFF / 0x8000) << 8) | (v * 0xFF / 0x8000);
                 }
             }
 
@@ -657,14 +665,19 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
                     shifted_e0 = shifted_e0 >> rcp_triarea2_rshift;
                 }
 
+                assert((shifted_e0 & 0xFFFF) == shifted_e0);
+                assert((shifted_e2 & 0xFFFF) == shifted_e2);
+                assert((rcp_triarea2_mantissa & 0xFFFF) == rcp_triarea2_mantissa);
+
                 // compute non-perspective-correct barycentrics for vertices 1 and 2
                  int32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 16;
                  int32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 16;
-                 assert(u < 0x8000);
-                 assert(v < 0x8000);
+                 assert(u >= 0 && u <= 0x8000);
+                 assert(v >= 0 && v <= 0x8000);
 
                  // not related to vertex w. Just third barycentric. Bad naming.
-                 int32_t w = 0x7FFF - u - v;
+                 int32_t w = 0x8000 - u - v;
+                 assert(w >= 0 && w <= 0x8000);
 
                  // compute interpolated depth
                  uint32_t pixel_Z = (drawcmd->vert_Zs[0] << 15)
@@ -680,7 +693,7 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
                  if (pixel_Z < fb->depthbuffer[dst_i])
                 {
                     fb->depthbuffer[dst_i] = pixel_Z;
-                    fb->backbuffer[dst_i] = (0xFF << 24) | ((w / 0x80) << 16) | ((u / 0x80) << 8) | (v / 0x80);
+                    fb->backbuffer[dst_i] = (0xFF << 24) | ((w * 0xFF / 0x8000) << 16) | ((u * 0xFF / 0x8000) << 8) | (v * 0xFF / 0x8000);
                 }
             }
 
@@ -795,9 +808,11 @@ static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd
                 {
                     int32_t rotated_v = (v + vertex_rotation) % 3;
 
-                    drawtilecmd.edges[v] = (int32_t)row_edges[rotated_v];
-                    drawtilecmd.edge_dxs[v] = (int32_t)drawcmd->edge_dxs[rotated_v];
-                    drawtilecmd.edge_dys[v] = (int32_t)drawcmd->edge_dys[rotated_v];
+                    drawtilecmd.edges[v] = row_edges[rotated_v];
+                    drawtilecmd.edge_dxs[v] = drawcmd->edge_dxs[rotated_v];
+                    drawtilecmd.edge_dys[v] = drawcmd->edge_dys[rotated_v];
+                    drawtilecmd.shifted_es[v] = drawcmd->shifted_es[rotated_v];
+                    drawtilecmd.vert_Zs[v] = drawcmd->vert_Zs[rotated_v];
                 }
 
                 int32_t coarse_topleft_x = tile_x * TILE_WIDTH_IN_PIXELS + cb_x * COARSE_BLOCK_WIDTH_IN_PIXELS;
@@ -1955,6 +1970,21 @@ commonsetup_end:
                         drawtilecmd.edges[v] = (int32_t)tile_i_edges[rotated_v];
                         drawtilecmd.edge_dxs[v] = (int32_t)edge_dxs[rotated_v];
                         drawtilecmd.edge_dys[v] = (int32_t)edge_dys[rotated_v];
+                        
+                        // work in progress
+                        // int32_t rcp_triarea2_mantissa = (rcp_triarea2 & 0xFFFF);
+                        // int32_t rcp_triarea2_exponent = (rcp_triarea2 & 0xFF0000) >> 16;
+                        // int32_t rcp_triarea2_rshift = rcp_triarea2_exponent - 127;
+                        // 
+                        // int64_t shifted_e = -(tile_i_edges[rotated_v] - drawtilecmd.edges[v]);
+                        // if (rcp_triarea2_rshift < 0)
+                        //     shifted_e = shifted_e << -rcp_triarea2_rshift;
+                        // else
+                        //     shifted_e = shifted_e >> rcp_triarea2_rshift;
+                        // 
+                        // assert(shifted_e >= INT32_MIN && shifted_e <= INT32_MAX);
+                        // drawtilecmd.shifted_es[v] = (int32_t)shifted_e;
+
                         drawtilecmd.vert_Zs[v] = verts[rotated_v].z;
                     }
 

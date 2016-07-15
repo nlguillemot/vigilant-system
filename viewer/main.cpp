@@ -604,7 +604,7 @@ int main()
                     }
                 }
 
-                uint32_t depth_range = max_depth - min_depth;
+                uint32_t depth_range = max_depth - min_depth + 1;
                 for (int32_t i = 0; i < fbwidth * fbheight; i++)
                 {
                     uint32_t* dst = (uint32_t*)&rgba8_pixels[4 * i];
@@ -615,7 +615,7 @@ int main()
                     }
                     else
                     {
-                        uint32_t d = (uint32_t)(255.0 * ((double)(src - min_depth) / depth_range));
+                        uint32_t d = (uint32_t)(255.0 * (1.0 - ((double)(src - min_depth) / depth_range)));
                         *dst = 0xFF000000 | (d << 16) | (d << 8) | d;
                     }
                 }
