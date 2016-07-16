@@ -341,7 +341,8 @@ int main()
         "gourd",
         "teapot",
         "dragon",
-        "buddha"
+        "buddha",
+        "sponza"
     };
 
     static const size_t num_models = sizeof(all_model_names) / sizeof(*all_model_names);
@@ -434,7 +435,7 @@ int main()
 
         switched_model |= loaded_model_first_ids[curr_model_index] == -1;
 
-        ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiSetCond_Once);
+        ImGui::SetNextWindowSize(ImVec2(400, 325), ImGuiSetCond_Once);
         if (ImGui::Begin("Toolbox"))
         {
             ImGui::Checkbox("Show tiles", &show_tiles);

@@ -9,7 +9,7 @@
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
 
-#define SCENE_MAX_NUM_MODELS 256
+#define SCENE_MAX_NUM_MODELS 512
 #define SCENE_MAX_NUM_INSTANCES 512
 
 #include <imgui.h>
@@ -201,7 +201,8 @@ void renderer_render_scene(renderer_t* rd, scene_t* sc)
 
         instance_t* instance = &(*sc->instances)[instance_id];
         renderer_render_instance(rd, sc, instance, viewproj);
-        
+        framebuffer_resolve(rd->fb);
+
     skipinstance:
         instance_index++;
     }
