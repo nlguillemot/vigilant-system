@@ -601,6 +601,13 @@ int main()
                 for (uint64_t& pc : summed_tile_pcs)
                     pc = pc * 1000000 / framebuffer_get_perfcounter_frequency(fb);
 
+                size_t total_num_pcs = renderer_get_num_perfcounters(rd) + framebuffer_get_num_perfcounters(fb) + framebuffer_get_num_tile_perfcounters(fb);
+                std::vector<uint64_t> totals(total_num_pcs);
+                std::vector<uint64_t> totals_squared(total_num_pcs);
+
+                std::vector<uint64_t> minimums(total_num_pcs, -1);
+                std::vector<uint64_t> maximums(total_num_pcs, 0);
+
                 for (size_t view_i = 0; view_i < benchmark_views.size(); view_i++)
                 {
                     std::vector<uint64_t> all_pcs;
@@ -608,6 +615,76 @@ int main()
                     all_pcs.insert(end(all_pcs), begin(benchmark_framebuffer_pcs) + view_i * framebuffer_get_num_perfcounters(fb), begin(benchmark_framebuffer_pcs) + (view_i + 1)* framebuffer_get_num_perfcounters(fb));
                     all_pcs.insert(end(all_pcs), begin(summed_tile_pcs) + view_i * framebuffer_get_num_tile_perfcounters(fb), begin(summed_tile_pcs) + (view_i + 1) * framebuffer_get_num_tile_perfcounters(fb));
 
+                    for (size_t i = 0; i < all_pcs.size(); i++)
+                    {
+                        totals[i] += all_pcs[i];
+                        totals_squared[i] += all_pcs[i] * all_pcs[i];
+
+                        if (all_pcs[i] < minimums[i])
+                        {
+                            minimums[i] = all_pcs[i];
+                        }
+                        
+                        if (all_pcs[i] > maximums[i])
+                        {
+                            maximums[i] = all_pcs[i];
+                        }
+                    }
+                }
+
+                std::vector<uint64_t> averages = totals;
+                for (uint64_t& avg : averages)
+                    avg = avg / (benchmark_views.empty() ? 1 : benchmark_views.size());
+
+                std::vector<double> stddevs(total_num_pcs);
+                for (size_t i = 0; i < stddevs.size(); i++)
+                {
+                    stddevs[i] = sqrt((double)totals_squared[i] / (benchmark_views.empty() ? 1 : benchmark_views.size()) - (double)averages[i] * averages[i]);
+                }
+
+                fprintf(f, "total");
+                for (size_t i = 0; i < total_num_pcs; i++)
+                {
+                    fprintf(f, ",%llu", totals[i]);
+                }
+                fprintf(f, "\n");
+
+                fprintf(f, "minimum");
+                for (size_t i = 0; i < total_num_pcs; i++)
+                {
+                    fprintf(f, ",%llu", minimums[i]);
+                }
+                fprintf(f, "\n");
+
+                fprintf(f, "maximum");
+                for (size_t i = 0; i < total_num_pcs; i++)
+                {
+                    fprintf(f, ",%llu", maximums[i]);
+                }
+                fprintf(f, "\n");
+
+                fprintf(f, "mean");
+                for (size_t i = 0; i < total_num_pcs; i++)
+                {
+                    fprintf(f, ",%llu", averages[i]);
+                }
+                fprintf(f, "\n");
+
+                fprintf(f, "sdev");
+                for (size_t i = 0; i < total_num_pcs; i++)
+                {
+                    fprintf(f, ",%lf", stddevs[i]);
+                }
+                fprintf(f, "\n");
+
+                for (size_t view_i = 0; view_i < benchmark_views.size(); view_i++)
+                {
+                    std::vector<uint64_t> all_pcs;
+                    all_pcs.insert(end(all_pcs), begin(benchmark_renderer_pcs) + view_i * renderer_get_num_perfcounters(rd), begin(benchmark_renderer_pcs) + (view_i + 1) * renderer_get_num_perfcounters(rd));
+                    all_pcs.insert(end(all_pcs), begin(benchmark_framebuffer_pcs) + view_i * framebuffer_get_num_perfcounters(fb), begin(benchmark_framebuffer_pcs) + (view_i + 1)* framebuffer_get_num_perfcounters(fb));
+                    all_pcs.insert(end(all_pcs), begin(summed_tile_pcs) + view_i * framebuffer_get_num_tile_perfcounters(fb), begin(summed_tile_pcs) + (view_i + 1) * framebuffer_get_num_tile_perfcounters(fb));
+
+                    fprintf(f, "%d", (int)view_i);
                     for (size_t i = 0; i < all_pcs.size(); i++)
                     {
                         fprintf(f, ",%llu", all_pcs[i]);
