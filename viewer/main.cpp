@@ -336,6 +336,7 @@ int main()
     }
 
     renderer_t* rd = new_renderer(fbwidth, fbheight);
+    framebuffer_t* fb = renderer_get_framebuffer(rd);
 
     const char* all_model_names[] = {
         "cube",
@@ -425,9 +426,6 @@ int main()
 
     uint8_t* zoomImagePixels = (uint8_t*)malloc(kZoomTextureWidth * kZoomTextureWidth * 4);
     assert(zoomImagePixels);
-
-    // readback framebuffer contents
-    framebuffer_t* fb = renderer_get_framebuffer(rd);
 
     while (!(GetActiveWindow() == g_hWnd && (GetAsyncKeyState(VK_ESCAPE) & 0x8000)))
     {
