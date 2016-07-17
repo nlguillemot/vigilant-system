@@ -1202,7 +1202,6 @@ static void rasterize_triangle(
 
     // perform near plane clipping
     {
-
         // check which vertices are behind the near plane
         int32_t vert_near_clipped[3];
         vert_near_clipped[0] = clipVerts[0].z < 0;
@@ -1392,7 +1391,6 @@ clipping_end:
 
     // transform vertices from clip space to window coordinates
     xyzw_i32_t verts[3];
-    int32_t rcp_ws[3];
     for (int32_t v = 0; v < 3; v++)
     {
         int32_t one_over_w = s1516_div(s1516_int(1), clipVerts[v].w);
@@ -1413,7 +1411,6 @@ clipping_end:
         assert(verts[v].z >= 0 && verts[v].z <= 0xFFFF);
 
         verts[v].w = clipVerts[v].w;
-        rcp_ws[v] = one_over_w;
     }
 
     uint32_t min_Z = verts[0].z;
@@ -1523,10 +1520,6 @@ commonsetup_end:
             verts[1] = verts[2];
             verts[2] = tmp;
             triarea2 = -triarea2;
-
-            int32_t tmp_rcp_w = rcp_ws[1];
-            rcp_ws[1] = rcp_ws[2];
-            rcp_ws[2] = tmp_rcp_w;
         }
 
         // compute 1/(2triarea) and convert to a pseudo 8.16 floating point value
@@ -1592,74 +1585,6 @@ commonsetup_end:
 
         drawsmalltricmd.min_Z = min_Z;
         drawsmalltricmd.max_Z = max_Z;
-
-        // rotate vertices so the one with maximum edge equation slope doesn't get used in interpolation
-        int32_t max_slope_vertex = -1;
-        int32_t max_slope = 0;
-        for (int32_t i = 0; i < 3; i++)
-        {
-            int32_t v1 = (i + 1) % 3;
-            int32_t slope = edge_dxs[v1] * edge_dxs[1] + edge_dys[v1] * edge_dys[v1];
-            assert((int64_t)slope == ((int64_t)edge_dxs[v1] * edge_dxs[1] + (int64_t)edge_dys[v1] * edge_dys[v1]));
-            if (slope > max_slope)
-            {
-                max_slope_vertex = i;
-                max_slope = slope;
-            }
-        }
-
-        if (max_slope_vertex == 1)
-        {
-            int32_t e = edges[0];
-            int32_t edx = edge_dxs[0];
-            int32_t edy = edge_dys[0];
-            xyzw_i32_t v = verts[0];
-            int32_t rcpw = rcp_ws[0];
-
-            edges[0] = edges[1];
-            edge_dxs[0] = edge_dxs[1];
-            edge_dys[0] = edge_dys[1];
-            verts[0] = verts[1];
-            rcp_ws[0] = rcp_ws[1];
-
-            edges[1] = edges[2];
-            edge_dxs[1] = edge_dxs[2];
-            edge_dys[1] = edge_dys[2];
-            verts[1] = verts[2];
-            rcp_ws[1] = rcp_ws[2];
-
-            edges[2] = e;
-            edge_dxs[2] = edx;
-            edge_dys[2] = edy;
-            verts[2] = v;
-            rcp_ws[2] = rcpw;
-        }
-        else if (max_slope_vertex == 2)
-        {
-            int32_t e = edges[0];
-            int32_t edx = edge_dxs[0];
-            int32_t edy = edge_dys[0];
-            xyzw_i32_t v = verts[0];
-            int32_t rcpw = rcp_ws[0];
-
-            edges[0] = edges[2];
-            edge_dxs[0] = edge_dxs[2];
-            edge_dys[0] = edge_dys[2];
-            verts[0] = verts[2];
-            rcp_ws[0] = rcp_ws[2];
-
-            edges[2] = edges[1];
-            edge_dxs[2] = edge_dxs[1];
-            edge_dys[2] = edge_dys[1];
-            verts[2] = verts[1];
-            rcp_ws[2] = rcp_ws[1];
-
-            edges[1] = e;
-            edge_dxs[1] = edx;
-            edge_dys[1] = edy;
-            verts[1] = v;
-            rcp_ws[1] = rcpw;
-        }
 
         for (int32_t v = 0; v < 3; v++)
         {
@@ -1839,10 +1764,6 @@ commonsetup_end:
             verts[1] = verts[2];
             verts[2] = tmp;
             triarea2 = -triarea2;
-
-            int32_t tmp_rcp_w = rcp_ws[1];
-            rcp_ws[1] = rcp_ws[2];
-            rcp_ws[2] = tmp_rcp_w;
         }
 
         // compute 1/(2triarea) and convert to a pseudo 8.16 floating point value
