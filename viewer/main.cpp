@@ -30,6 +30,7 @@
 
 int g_PendingMouseWarpUp;
 int g_PendingMouseWarpRight;
+bool g_Escaped = false;
 
 LRESULT CALLBACK MyWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -38,6 +39,8 @@ LRESULT CALLBACK MyWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
     switch (message)
     {
     case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE)
+            g_Escaped = true;
         if (wParam == 'H')
             g_PendingMouseWarpRight--;
         if (wParam == 'J')
@@ -377,8 +380,8 @@ int main()
         scene_set_projection(sc, fx_proj);
     }
 
-    float eye[3] = { 0.0f, 0.0f, 3.0f };
-    float look[3] = { 0.0f, 0.0f, -1.0f };
+    float eye[3] = { 3.0f, 0.0f, 0.0f };
+    float look[3] = { -1.0f, 0.0f, 0.0f };
     float up[3] = { 0.0f, 1.0f, 0.0f };
     float view[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
     float cammovespeed = 0.0f;
@@ -427,7 +430,7 @@ int main()
     uint8_t* zoomImagePixels = (uint8_t*)malloc(kZoomTextureWidth * kZoomTextureWidth * 4);
     assert(zoomImagePixels);
 
-    while (!(GetActiveWindow() == g_hWnd && (GetAsyncKeyState(VK_ESCAPE) & 0x8000)))
+    while (!g_Escaped)
     {
         MSG msg;
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
@@ -605,7 +608,7 @@ int main()
                     }
                 }
 
-                // convert to microseconds
+                // convert to milliseconds
                 for (uint64_t& pc : benchmark_renderer_pcs)
                     pc = pc * 1000000 / renderer_get_perfcounter_frequency(rd);
 
@@ -633,12 +636,13 @@ int main()
 
                     for (size_t i = 0; i < all_pcs.size(); i++)
                     {
-                        columns[i].push_back(all_pcs[i]);
+                        if (all_pcs[i] != 0)
+                            columns[i].push_back(all_pcs[i]);
 
                         totals[i] += all_pcs[i];
                         totals_squared[i] += all_pcs[i] * all_pcs[i];
 
-                        if (all_pcs[i] < minimums[i])
+                        if (all_pcs[i] != 0 && all_pcs[i] < minimums[i])
                         {
                             minimums[i] = all_pcs[i];
                         }
@@ -650,14 +654,20 @@ int main()
                     }
                 }
 
+                for (uint64_t& m : minimums)
+                    if (m == -1)
+                        m = 0;
+
                 std::vector<uint64_t> averages = totals;
-                for (uint64_t& avg : averages)
-                    avg = avg / (benchmark_views.empty() ? 1 : benchmark_views.size());
+                for (size_t i = 0; i < averages.size(); i++)
+                {
+                    averages[i] = averages[i] / (columns[i].empty() ? 1 : columns[i].size());
+                }
 
                 std::vector<double> stddevs(total_num_pcs);
                 for (size_t i = 0; i < stddevs.size(); i++)
                 {
-                    stddevs[i] = sqrt((double)totals_squared[i] / (benchmark_views.empty() ? 1 : benchmark_views.size()) - (double)averages[i] * averages[i]);
+                    stddevs[i] = sqrt((totals_squared[i] / 1000.0 / 1000.0) / (columns[i].empty() ? 1 : columns[i].size()) - (averages[i] / 1000.0) * (averages[i] / 1000.0));
                 }
 
                 std::vector<std::vector<uint64_t>> sorted_columns = columns;
@@ -697,49 +707,49 @@ int main()
                 fprintf(f, "sum");
                 for (size_t i = 0; i < total_num_pcs; i++)
                 {
-                    fprintf(f, ",%llu", totals[i]);
+                    fprintf(f, ",%lf", totals[i] / 1000.0);
                 }
                 fprintf(f, "\n");
 
                 fprintf(f, "min");
                 for (size_t i = 0; i < total_num_pcs; i++)
                 {
-                    fprintf(f, ",%llu", minimums[i]);
+                    fprintf(f, ",%lf", minimums[i] / 1000.0);
                 }
                 fprintf(f, "\n");
 
                 fprintf(f, "25th");
                 for (size_t i = 0; i < total_num_pcs; i++)
                 {
-                    fprintf(f, ",%llu", percentiles25[i]);
+                    fprintf(f, ",%lf", percentiles25[i] / 1000.0);
                 }
                 fprintf(f, "\n");
 
                 fprintf(f, "med");
                 for (size_t i = 0; i < total_num_pcs; i++)
                 {
-                    fprintf(f, ",%llu", medians[i]);
+                    fprintf(f, ",%lf", medians[i] / 1000.0);
                 }
                 fprintf(f, "\n");
 
                 fprintf(f, "75th");
                 for (size_t i = 0; i < total_num_pcs; i++)
                 {
-                    fprintf(f, ",%llu", percentiles75[i]);
+                    fprintf(f, ",%lf", percentiles75[i] / 1000.0);
                 }
                 fprintf(f, "\n");
 
                 fprintf(f, "max");
                 for (size_t i = 0; i < total_num_pcs; i++)
                 {
-                    fprintf(f, ",%llu", maximums[i]);
+                    fprintf(f, ",%lf", maximums[i] / 1000.0);
                 }
                 fprintf(f, "\n");
 
                 fprintf(f, "mean");
                 for (size_t i = 0; i < total_num_pcs; i++)
                 {
-                    fprintf(f, ",%llu", averages[i]);
+                    fprintf(f, ",%lf", averages[i] / 1000.0);
                 }
                 fprintf(f, "\n");
 
@@ -767,7 +777,7 @@ int main()
                     fprintf(f, "%d", (int)view_i);
                     for (size_t i = 0; i < all_pcs.size(); i++)
                     {
-                        fprintf(f, ",%llu", all_pcs[i]);
+                        fprintf(f, ",%lf", all_pcs[i] / 1000.0);
                     }
                     fprintf(f, "\n");
                 }

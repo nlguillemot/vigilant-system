@@ -5,8 +5,6 @@ VisualStudioVersion = 14.0.25123.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "rasterizer", "rasterizer\rasterizer.vcxproj", "{D4F1E22E-CFBC-4920-9E8E-A9110C526C9E}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "benchmark", "benchmark\benchmark.vcxproj", "{B33EE60E-7F4A-4941-8DA6-20BC18F75B55}"
-EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "renderer", "renderer\renderer.vcxproj", "{2BB11C47-8690-486D-8098-E0DBA2BCBE20}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "viewer", "viewer\viewer.vcxproj", "{EC953FAF-3FCD-4373-AC2B-00BCDCD72B71}"
@@ -34,10 +32,6 @@ Global
 		{D4F1E22E-CFBC-4920-9E8E-A9110C526C9E}.Debug|x64.Build.0 = Debug|x64
 		{D4F1E22E-CFBC-4920-9E8E-A9110C526C9E}.Release|x64.ActiveCfg = Release|x64
 		{D4F1E22E-CFBC-4920-9E8E-A9110C526C9E}.Release|x64.Build.0 = Release|x64
-		{B33EE60E-7F4A-4941-8DA6-20BC18F75B55}.Debug|x64.ActiveCfg = Debug|x64
-		{B33EE60E-7F4A-4941-8DA6-20BC18F75B55}.Debug|x64.Build.0 = Debug|x64
-		{B33EE60E-7F4A-4941-8DA6-20BC18F75B55}.Release|x64.ActiveCfg = Release|x64
-		{B33EE60E-7F4A-4941-8DA6-20BC18F75B55}.Release|x64.Build.0 = Release|x64
 		{2BB11C47-8690-486D-8098-E0DBA2BCBE20}.Debug|x64.ActiveCfg = Debug|x64
 		{2BB11C47-8690-486D-8098-E0DBA2BCBE20}.Debug|x64.Build.0 = Debug|x64
 		{2BB11C47-8690-486D-8098-E0DBA2BCBE20}.Release|x64.ActiveCfg = Release|x64
