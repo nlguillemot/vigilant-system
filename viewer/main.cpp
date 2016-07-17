@@ -867,8 +867,11 @@ int main()
 
             if (recording_camera)
             {
-                recorded_camera_views.emplace_back();
-                std::memcpy(recorded_camera_views.back().data(), view_s1516, sizeof(view_s1516));
+                if (recorded_camera_views.empty() || memcmp(&recorded_camera_views.back(), view_s1516, sizeof(view_s1516)) != 0)
+                {
+                    recorded_camera_views.emplace_back();
+                    std::memcpy(recorded_camera_views.back().data(), view_s1516, sizeof(view_s1516));
+                }
             }
         }
 
