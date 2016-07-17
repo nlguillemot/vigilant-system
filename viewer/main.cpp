@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <algorithm>
 
 #pragma comment(lib, "OpenGL32.lib")
 #pragma comment(lib, "glu32.lib")
@@ -560,7 +561,22 @@ int main()
             {
                 FILE* f = fopen(benchmark_filename.c_str(), "w");
 
-                fprintf(f, "%s\n", all_model_names[curr_model_index]);
+                fprintf(f, "scene,%s\n", all_model_names[curr_model_index]);
+
+                char cpuname[0x40];
+                memset(cpuname, 0, sizeof(cpuname));
+
+                int cpuInfo[4] = { -1 };
+                __cpuid(cpuInfo, 0x80000002);
+                memcpy(cpuname, cpuInfo, sizeof(cpuInfo));
+                __cpuid(cpuInfo, 0x80000003);
+                memcpy(cpuname + 16, cpuInfo, sizeof(cpuInfo));
+                __cpuid(cpuInfo, 0x80000004);
+                memcpy(cpuname + 32, cpuInfo, sizeof(cpuInfo));
+
+                fprintf(f, "cpu,%s\n", cpuname);
+
+                fprintf(f, "\n");
 
                 std::vector<const char*> renderer_pc_names(renderer_get_num_perfcounters(rd));
                 renderer_get_perfcounter_names(rd, renderer_pc_names.data());
@@ -608,6 +624,8 @@ int main()
                 std::vector<uint64_t> minimums(total_num_pcs, -1);
                 std::vector<uint64_t> maximums(total_num_pcs, 0);
 
+                std::vector<std::vector<uint64_t>> columns(total_num_pcs);
+
                 for (size_t view_i = 0; view_i < benchmark_views.size(); view_i++)
                 {
                     std::vector<uint64_t> all_pcs;
@@ -617,6 +635,8 @@ int main()
 
                     for (size_t i = 0; i < all_pcs.size(); i++)
                     {
+                        columns[i].push_back(all_pcs[i]);
+
                         totals[i] += all_pcs[i];
                         totals_squared[i] += all_pcs[i] * all_pcs[i];
 
@@ -642,21 +662,76 @@ int main()
                     stddevs[i] = sqrt((double)totals_squared[i] / (benchmark_views.empty() ? 1 : benchmark_views.size()) - (double)averages[i] * averages[i]);
                 }
 
-                fprintf(f, "total");
+                std::vector<std::vector<uint64_t>> sorted_columns = columns;
+                for (std::vector<uint64_t>& col : sorted_columns)
+                    std::sort(begin(col), end(col));
+
+                std::vector<uint64_t> medians(total_num_pcs);
+                for (size_t i = 0; i < sorted_columns.size(); i++)
+                {
+                    if (sorted_columns[i].empty())
+                        continue;
+
+                    if (sorted_columns[i].size() % 2 == 1)
+                        medians[i] = sorted_columns[i][sorted_columns[i].size() / 2];
+                    else
+                        medians[i] = (sorted_columns[i][sorted_columns[i].size() / 2 - 1] + sorted_columns[i][sorted_columns[i].size() / 2]) / 2;
+                }
+
+                std::vector<uint64_t> percentiles25(total_num_pcs);
+                for (size_t i = 0; i < sorted_columns.size(); i++)
+                {
+                    if (sorted_columns[i].empty())
+                        continue;
+
+                    percentiles25[i] = sorted_columns[i][sorted_columns[i].size() / 4];
+                }
+
+                std::vector<uint64_t> percentiles75(total_num_pcs);
+                for (size_t i = 0; i < sorted_columns.size(); i++)
+                {
+                    if (sorted_columns[i].empty())
+                        continue;
+
+                    percentiles75[i] = sorted_columns[i][sorted_columns[i].size() * 3 / 4];
+                }
+
+                fprintf(f, "sum");
                 for (size_t i = 0; i < total_num_pcs; i++)
                 {
                     fprintf(f, ",%llu", totals[i]);
                 }
                 fprintf(f, "\n");
 
-                fprintf(f, "minimum");
+                fprintf(f, "min");
                 for (size_t i = 0; i < total_num_pcs; i++)
                 {
                     fprintf(f, ",%llu", minimums[i]);
                 }
                 fprintf(f, "\n");
 
-                fprintf(f, "maximum");
+                fprintf(f, "25th");
+                for (size_t i = 0; i < total_num_pcs; i++)
+                {
+                    fprintf(f, ",%llu", percentiles25[i]);
+                }
+                fprintf(f, "\n");
+
+                fprintf(f, "med");
+                for (size_t i = 0; i < total_num_pcs; i++)
+                {
+                    fprintf(f, ",%llu", medians[i]);
+                }
+                fprintf(f, "\n");
+
+                fprintf(f, "75th");
+                for (size_t i = 0; i < total_num_pcs; i++)
+                {
+                    fprintf(f, ",%llu", percentiles75[i]);
+                }
+                fprintf(f, "\n");
+
+                fprintf(f, "max");
                 for (size_t i = 0; i < total_num_pcs; i++)
                 {
                     fprintf(f, ",%llu", maximums[i]);
@@ -674,6 +749,13 @@ int main()
                 for (size_t i = 0; i < total_num_pcs; i++)
                 {
                     fprintf(f, ",%lf", stddevs[i]);
+                }
+                fprintf(f, "\n");
+
+                fprintf(f, "\nframe");
+                for (size_t i = 0; i < all_names.size(); i++)
+                {
+                    fprintf(f, ",%s", all_names[i]);
                 }
                 fprintf(f, "\n");
 
@@ -938,9 +1020,22 @@ int main()
             glDisable(GL_BLEND);
         }
 
-        ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiSetCond_Once);
+        ImGui::SetNextWindowSize(ImVec2(300, 225), ImGuiSetCond_Once);
         if (ImGui::Begin("Info"))
         {
+            char cpuname[0x40];
+            memset(cpuname, 0, sizeof(cpuname));
+
+            int cpuInfo[4] = { -1 };
+            __cpuid(cpuInfo, 0x80000002);
+            memcpy(cpuname, cpuInfo, sizeof(cpuInfo));
+            __cpuid(cpuInfo, 0x80000003);
+            memcpy(cpuname + 16, cpuInfo, sizeof(cpuInfo));
+            __cpuid(cpuInfo, 0x80000004);
+            memcpy(cpuname + 32, cpuInfo, sizeof(cpuInfo));
+
+            ImGui::Text("CPU: %s", cpuname);
+
             if (cursor.x >= 0 && cursor.x < fbwidth && cursor.y >= 0 && cursor.y < fbheight)
             {
                 ImGui::Text("CursorPos: (%d, %d)", cursor.x, cursor.y);
