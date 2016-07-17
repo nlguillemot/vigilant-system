@@ -495,12 +495,16 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
                 // compute non-perspective-correct barycentrics for vertices 1 and 2
                 int32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 16;
                 int32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 16;
-                assert(u >= 0 && u < 0x8000);
-                assert(v >= 0 && v < 0x8000);
+                
+                if (u + v > 0x7FFF)
+                    v = 0x7FFF - u;
+
+                assert(u >= 0 && u <= 0x7FFF);
+                assert(v >= 0 && v <= 0x7FFF);
                 
                 // not related to vertex w. Just third barycentric. Bad naming.
                 int32_t w = 0x7FFF - u - v;
-                assert(w >= 0 && w < 0x8000);
+                assert(w >= 0 && w <= 0x7FFF);
 
                 assert(u + v + w == 0x7FFF);
 
@@ -649,8 +653,8 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
                 int32_t rcp_triarea2_exponent = (drawcmd->rcp_triarea2 & 0xFF0000) >> 16;
                 int32_t rcp_triarea2_rshift = rcp_triarea2_exponent - 127;
 
-                int32_t shifted_e2 = -edges_row[2];
-                int32_t shifted_e0 = -edges_row[0];
+                int32_t shifted_e2 = (int32_t)-edges_row[2];
+                int32_t shifted_e0 = (int32_t)-edges_row[0];
                 if (rcp_triarea2_rshift < 0)
                 {
                     shifted_e2 = shifted_e2 << -rcp_triarea2_rshift;
@@ -669,15 +673,19 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
                 assert((shifted_e2 & 0xFFFF) == shifted_e2);
                 assert((rcp_triarea2_mantissa & 0xFFFF) == rcp_triarea2_mantissa);
 
-                // compute non-perspective-correct barycentrics for vertices 1 and 2
-                 uint32_t u = ((uint32_t)shifted_e2 * rcp_triarea2_mantissa) >> 16;
-                 uint32_t v = ((uint32_t)shifted_e0 * rcp_triarea2_mantissa) >> 16;
-                 assert(u >= 0 && u < 0x8000);
-                 assert(v >= 0 && v < 0x8000);
+                 // compute non-perspective-correct barycentrics for vertices 1 and 2
+                 int32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 16;
+                 int32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 16;
+
+                 if (u + v > 0x7FFF)
+                     v = 0x7FFF - u;
+
+                 assert(u >= 0 && u <= 0x7FFF);
+                 assert(v >= 0 && v <= 0x7FFF);
 
                  // not related to vertex w. Just third barycentric. Bad naming.
                  uint32_t w = 0x7FFF - u - v;
-                 assert(w >= 0 && w < 0x8000);
+                 assert(w >= 0 && w <= 0x7FFF);
 
                  assert(u + v + w == 0x7FFF);
 
@@ -1194,6 +1202,7 @@ static void rasterize_triangle(
 
     // perform near plane clipping
     {
+
         // check which vertices are behind the near plane
         int32_t vert_near_clipped[3];
         vert_near_clipped[0] = clipVerts[0].z < 0;
@@ -1393,9 +1402,15 @@ clipping_end:
         verts[v].x = s168_s1516(s1516_mul(s1516_div(s1516_add(s1516_mul(+clipVerts[v].x, one_over_w), s1516_int(1)), s1516_int(2)), s1516_int(fb->width_in_pixels)));
         verts[v].y = s168_s1516(s1516_mul(s1516_div(s1516_add(s1516_mul(-clipVerts[v].y, one_over_w), s1516_int(1)), s1516_int(2)), s1516_int(fb->height_in_pixels)));
 
-        // TODO: clip things that all outside the guard band
+        // TODO: clip things that are outside the guard band
 
-        verts[v].z = s1516_mul(clipVerts[v].z, one_over_w);
+        // perform z/w, rounding down to maintain the z < w upper bound
+        verts[v].z = ((int64_t)clipVerts[v].z * one_over_w - (clipVerts[v].w / 2)) >> 16;
+        if (verts[v].z < 0)
+            verts[v].z = 0;
+
+        // Should be 0 <= z < w, thanks to near and far plane clipping
+        assert(verts[v].z >= 0 && verts[v].z <= 0xFFFF);
 
         verts[v].w = clipVerts[v].w;
         rcp_ws[v] = one_over_w;
@@ -1958,31 +1973,43 @@ commonsetup_end:
                     {
                         int32_t rotated_v = (v + vertex_rotation) % 3;
 
-                        // ensure edges to test are within range of 32 bits (they should be, since trivial accept/reject only keeps nearby edges)
+                        assert(edge_dxs[rotated_v] >= INT32_MIN && edge_dxs[rotated_v] <= INT32_MAX);
+                        assert(edge_dys[rotated_v] >= INT32_MIN && edge_dys[rotated_v] <= INT32_MAX);
+
+                        // the maximum change in area over one tile shouldn't exceed int32
+                        assert(tile_i_edge_trivAccs[v] - tile_i_edge_trivRejs[v] <= INT32_MAX);
+
                         if (v < num_tests_necessary)
                         {
+                            // ensure edges to test are within range of 32 bits (they should be, since trivial accept/reject only keeps nearby edges)
                             assert(tile_i_edges[rotated_v] >= INT32_MIN && tile_i_edges[rotated_v] <= INT32_MAX);
-                            assert(edge_dxs[rotated_v] >= INT32_MIN && edge_dxs[rotated_v] <= INT32_MAX);
-                            assert(edge_dys[rotated_v] >= INT32_MIN && edge_dys[rotated_v] <= INT32_MAX);
+                            drawtilecmd.edges[v] = (int32_t)tile_i_edges[rotated_v];
+
+                            // don't need any extra shift since we know there won't be any overflow
+                            drawtilecmd.shifted_es[v] = 0;
+                        }
+                        else
+                        {
+                            // make edge relative to the corner of the tile to prevent overflows
+                            drawtilecmd.edges[v] = 0;
+
+                            // compute an initial offset for the unnormalized barycentric coordinates
+                            int32_t rcp_triarea2_mantissa = (rcp_triarea2 & 0xFFFF);
+                            int32_t rcp_triarea2_exponent = (rcp_triarea2 & 0xFF0000) >> 16;
+                            int32_t rcp_triarea2_rshift = rcp_triarea2_exponent - 127;
+
+                            int64_t shifted_e = -tile_i_edges[rotated_v];
+                            if (rcp_triarea2_rshift < 0)
+                                shifted_e = shifted_e << -rcp_triarea2_rshift;
+                            else
+                                shifted_e = shifted_e >> rcp_triarea2_rshift;
+
+                            assert(shifted_e >= INT32_MIN && shifted_e <= INT32_MAX);
+                            drawtilecmd.shifted_es[v] = (int32_t)shifted_e;
                         }
 
-                        drawtilecmd.edges[v] = (int32_t)tile_i_edges[rotated_v];
                         drawtilecmd.edge_dxs[v] = (int32_t)edge_dxs[rotated_v];
                         drawtilecmd.edge_dys[v] = (int32_t)edge_dys[rotated_v];
-                        
-                        // work in progress
-                         int32_t rcp_triarea2_mantissa = (rcp_triarea2 & 0xFFFF);
-                         int32_t rcp_triarea2_exponent = (rcp_triarea2 & 0xFF0000) >> 16;
-                         int32_t rcp_triarea2_rshift = rcp_triarea2_exponent - 127;
-                         
-                         int64_t shifted_e = -(tile_i_edges[rotated_v] - drawtilecmd.edges[v]);
-                         if (rcp_triarea2_rshift < 0)
-                             shifted_e = shifted_e << -rcp_triarea2_rshift;
-                         else
-                             shifted_e = shifted_e >> rcp_triarea2_rshift;
-                         
-                         assert(shifted_e >= INT32_MIN && shifted_e <= INT32_MAX);
-                         drawtilecmd.shifted_es[v] = (int32_t)shifted_e;
 
                         drawtilecmd.vert_Zs[v] = verts[rotated_v].z;
                     }
