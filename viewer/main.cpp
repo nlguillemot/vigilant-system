@@ -924,11 +924,14 @@ int main()
             }
         }
 
-        POINT screencursor = cursor;
-        ClientToScreen(g_hWnd, &screencursor);
-        SetCursorPos(screencursor.x + g_PendingMouseWarpRight, screencursor.y - g_PendingMouseWarpUp);
-        g_PendingMouseWarpRight = 0;
-        g_PendingMouseWarpUp = 0;
+        if (g_PendingMouseWarpUp != 0 || g_PendingMouseWarpRight != 0)
+        {
+            POINT screencursor = cursor;
+            ClientToScreen(g_hWnd, &screencursor);
+            SetCursorPos(screencursor.x + g_PendingMouseWarpRight, screencursor.y - g_PendingMouseWarpUp);
+            g_PendingMouseWarpRight = 0;
+            g_PendingMouseWarpUp = 0;
+        }
 
         LARGE_INTEGER before_raster, after_raster;
         QueryPerformanceCounter(&before_raster);
