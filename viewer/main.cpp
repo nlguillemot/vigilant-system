@@ -402,8 +402,10 @@ int main()
     std::vector<std::array<int32_t, 16>> recorded_camera_views;
     
     bool running_benchmark = false;
+    bool running_full_benchmark = false;
     uint32_t benchmark_view_index;
     std::vector<std::array<int32_t, 16>> benchmark_views;
+    std::string benchmark_views_filename;
     std::vector<uint64_t> benchmark_framebuffer_pcs;
     std::vector<uint64_t> benchmark_framebuffer_tile_pcs;
     std::vector<uint64_t> benchmark_renderer_pcs;
@@ -446,9 +448,7 @@ int main()
         bool requested_screenshot = false;
         std::string screenshot_filename;
 
-        switched_model |= loaded_model_first_ids[curr_model_index] == -1;
-
-        ImGui::SetNextWindowSize(ImVec2(400, 350), ImGuiSetCond_Once);
+        ImGui::SetNextWindowSize(ImVec2(400, 375), ImGuiSetCond_Once);
         if (ImGui::Begin("Toolbox"))
         {
             ImGui::Checkbox("Show tiles", &show_tiles);
@@ -493,8 +493,11 @@ int main()
                     recording_camera = true;
                 }
 
+                bool pressed_run_benchmark = ImGui::Button("Run one benchmark");
                 ImGui::SameLine();
-                if (ImGui::Button("Run camera path benchmark"))
+                bool pressed_run_full_benchmark = ImGui::Button("Run full benchmark");
+
+                if (pressed_run_benchmark || pressed_run_full_benchmark)
                 {
                     std::string recording_filename = GetOpenFileNameEasy();
                     if (!recording_filename.empty())
@@ -506,11 +509,19 @@ int main()
                         fread(benchmark_views.data(), benchmark_views.size() * sizeof(benchmark_views[0]), 1, f);
                         fclose(f);
 
+                        benchmark_views_filename = recording_filename;
+
                         running_benchmark = true;
+                        running_full_benchmark = pressed_run_full_benchmark;
                         benchmark_view_index = 0;
                         benchmark_framebuffer_pcs.clear();
                         benchmark_framebuffer_tile_pcs.clear();
                         benchmark_renderer_pcs.clear();
+
+                        if (pressed_run_full_benchmark)
+                        {
+                            curr_model_index = 0;
+                        }
                     }
                 }
             }
@@ -555,9 +566,20 @@ int main()
         }
         ImGui::End();
 
+        switched_model |= loaded_model_first_ids[curr_model_index] == -1;
+
         if (running_benchmark && benchmark_view_index >= (uint32_t)benchmark_views.size())
         {
-            std::string benchmark_filename = GetSaveFileNameEasy();
+            std::string benchmark_filename;
+            if (!running_full_benchmark)
+            {
+                benchmark_filename = GetSaveFileNameEasy();
+            }
+            else
+            {
+                benchmark_filename = benchmark_views_filename + "_" + all_model_names[curr_model_index] + ".csv";
+            }
+
             if (!benchmark_filename.empty())
             {
                 FILE* f = fopen(benchmark_filename.c_str(), "w");
@@ -785,7 +807,28 @@ int main()
                 fclose(f);
             }
 
-            running_benchmark = false;
+            benchmark_view_index = 0;
+            benchmark_framebuffer_pcs.clear();
+            benchmark_framebuffer_tile_pcs.clear();
+            benchmark_renderer_pcs.clear();
+
+            if (running_full_benchmark)
+            {
+                if (curr_model_index + 1 == sizeof(all_model_names) / sizeof(*all_model_names))
+                {
+                    running_benchmark = false;
+                }
+                else
+                {
+                    curr_model_index++;
+                    switched_model = true;
+                }
+            }
+            else
+            {
+                running_benchmark = false;
+
+            }
         }
 
         if (switched_model)
@@ -1031,7 +1074,7 @@ int main()
             glDisable(GL_BLEND);
         }
 
-        ImGui::SetNextWindowSize(ImVec2(300, 225), ImGuiSetCond_Once);
+        ImGui::SetNextWindowSize(ImVec2(340, 225), ImGuiSetCond_Once);
         if (ImGui::Begin("Info"))
         {
             char cpuname[0x40];
