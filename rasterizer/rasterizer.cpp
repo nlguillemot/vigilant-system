@@ -289,6 +289,52 @@ typedef enum tilecmd_id_t
     tilecmd_id_cleartile
 } tilecmd_id_t;
 
+typedef struct framebuffer_perfcounters_t
+{
+    uint64_t clipping;
+    uint64_t common_setup;
+    uint64_t smalltri_setup;
+    uint64_t largetri_setup;
+} framebuffer_perfcounters_t;
+
+const char* kFramebufferPerfcounterNames[] = {
+    "clipping",
+    "common_setup",
+    "smalltri_setup",
+    "largetri_setup"
+};
+
+static_assert(sizeof(kFramebufferPerfcounterNames) / sizeof(*kFramebufferPerfcounterNames) == sizeof(framebuffer_perfcounters_t) / sizeof(uint64_t), "Names for perfcounters");
+
+typedef struct framebuffer_tile_perfcounters_t
+{
+    uint64_t smalltri_tile_raster;
+    uint64_t smalltri_coarse_raster;
+
+    uint64_t largetri_tile_raster;
+    uint64_t largetri_coarse_raster;
+
+    uint64_t cmdbuf_pushcmd;
+    uint64_t cmdbuf_resolve;
+
+    uint64_t clear;
+} framebuffer_tile_perfcounters_t;
+
+const char* kFramebufferTilePerfcounterNames[] = {
+    "smalltri_tile_raster",
+    "smalltri_coarse_raster",
+    
+    "largetri_tile_raster",
+    "largetri_coarse_raster",
+    
+    "cmdbuf_pushcmd",
+    "cmdbuf_resolve",
+    
+    "clear",
+};
+
+static_assert(sizeof(kFramebufferTilePerfcounterNames) / sizeof(*kFramebufferTilePerfcounterNames) == sizeof(framebuffer_tile_perfcounters_t) / sizeof(uint64_t), "Names for perfcounters");
+
 typedef struct xyzw_i32_t
 {
     int32_t x, y, z, w;
@@ -349,7 +395,7 @@ typedef struct framebuffer_t
     // performance counters
     uint64_t pc_frequency;
     framebuffer_perfcounters_t perfcounters;
-    tile_perfcounters_t* tile_perfcounters;
+    framebuffer_tile_perfcounters_t* tile_perfcounters;
 
 } framebuffer_t;
 
@@ -410,8 +456,8 @@ framebuffer_t* new_framebuffer(int32_t width, int32_t height)
 
     memset(&fb->perfcounters, 0, sizeof(framebuffer_perfcounters_t));
 
-    fb->tile_perfcounters = (tile_perfcounters_t*)malloc(fb->total_num_tiles * sizeof(tile_perfcounters_t));
-    memset(fb->tile_perfcounters, 0, fb->total_num_tiles * sizeof(tile_perfcounters_t));
+    fb->tile_perfcounters = (framebuffer_tile_perfcounters_t*)malloc(fb->total_num_tiles * sizeof(framebuffer_tile_perfcounters_t));
+    memset(fb->tile_perfcounters, 0, fb->total_num_tiles * sizeof(framebuffer_tile_perfcounters_t));
     
     return fb;
 }
@@ -2056,24 +2102,51 @@ uint64_t framebuffer_get_perfcounter_frequency(framebuffer_t* fb)
 void framebuffer_reset_perfcounters(framebuffer_t* fb)
 {
     memset(&fb->perfcounters, 0, sizeof(framebuffer_perfcounters_t));
-    memset(fb->tile_perfcounters, 0, sizeof(tile_perfcounters_t) * fb->total_num_tiles);
+    memset(fb->tile_perfcounters, 0, sizeof(framebuffer_tile_perfcounters_t) * fb->total_num_tiles);
 }
 
-void framebuffer_get_perfcounters(framebuffer_t* fb, framebuffer_perfcounters_t* pcs)
+int32_t framebuffer_get_num_perfcounters(framebuffer_t* fb)
+{
+    assert(fb);
+
+    return sizeof(framebuffer_perfcounters_t) / sizeof(uint64_t);
+}
+
+void framebuffer_get_perfcounter_names(framebuffer_t* fb, const char** names)
+{
+    assert(fb);
+    assert(names);
+
+    memcpy(names, kFramebufferPerfcounterNames, sizeof(kFramebufferPerfcounterNames));
+}
+
+void framebuffer_get_perfcounters(framebuffer_t* fb, uint64_t* pcs)
 {
     assert(fb);
     assert(pcs);
 
-    *pcs = fb->perfcounters;
+    memcpy(pcs, &fb->perfcounters, sizeof(framebuffer_perfcounters_t));
 }
 
-void framebuffer_get_tile_perfcounters(framebuffer_t* fb, tile_perfcounters_t tile_pcs[])
+int32_t framebuffer_get_num_tile_perfcounters(framebuffer_t* fb)
+{
+    assert(fb);
+    
+    return sizeof(framebuffer_tile_perfcounters_t) / sizeof(uint64_t);
+}
+
+void framebuffer_get_tile_perfcounter_names(framebuffer_t* fb, const char** names)
+{
+    assert(fb);
+    assert(names);
+
+    memcpy(names, kFramebufferTilePerfcounterNames, sizeof(kFramebufferTilePerfcounterNames));
+}
+
+void framebuffer_get_tile_perfcounters(framebuffer_t* fb, uint64_t* tile_pcs)
 {
     assert(fb);
     assert(tile_pcs);
 
-    for (int32_t i = 0; i < fb->total_num_tiles; i++)
-    {
-        tile_pcs[i] = fb->tile_perfcounters[i];
-    }
+    memcpy(tile_pcs, fb->tile_perfcounters, sizeof(framebuffer_tile_perfcounters_t) * fb->total_num_tiles);
 }

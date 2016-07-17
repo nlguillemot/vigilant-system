@@ -25,14 +25,11 @@ RENDERER_API void delete_renderer(renderer_t* rd);
 RENDERER_API void renderer_render_scene(renderer_t* rd, scene_t* sc);
 RENDERER_API framebuffer_t* renderer_get_framebuffer(renderer_t* rd);
 
-typedef struct renderer_perfcounters_t
-{
-    uint64_t mvptransform;
-} renderer_perfcounters_t;
-
 RENDERER_API uint64_t renderer_get_perfcounter_frequency(renderer_t* rd);
 RENDERER_API void renderer_reset_perfcounters(renderer_t* rd);
-RENDERER_API void renderer_get_perfcounters(renderer_t* rd, renderer_perfcounters_t* pcs);
+RENDERER_API int32_t renderer_get_num_perfcounters(renderer_t* rd);
+RENDERER_API void renderer_get_perfcounters(renderer_t* rd, uint64_t* pcs);
+RENDERER_API void renderer_get_perfcounter_names(renderer_t* rd, const char** names);
 
 RENDERER_API scene_t* new_scene();
 RENDERER_API void delete_scene(scene_t* sc);

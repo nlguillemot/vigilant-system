@@ -22,6 +22,7 @@
 
 #include <string>
 #include <vector>
+#include <array>
 
 #pragma comment(lib, "OpenGL32.lib")
 #pragma comment(lib, "glu32.lib")
@@ -392,6 +393,16 @@ int main()
     bool show_fine_blocks = false;
     bool show_perfheatmap = false;
 
+    bool recording_camera = false;
+    std::vector<std::array<int32_t, 16>> recorded_camera_views;
+    
+    bool running_benchmark = false;
+    uint32_t benchmark_view_index;
+    std::vector<std::array<int32_t, 16>> benchmark_views;
+    std::vector<uint64_t> benchmark_framebuffer_pcs;
+    std::vector<uint64_t> benchmark_framebuffer_tile_pcs;
+    std::vector<uint64_t> benchmark_renderer_pcs;
+
     bool show_depth = false;
 
     uint8_t* rgba8_pixels = (uint8_t*)malloc(fbwidth * fbheight * 4);
@@ -435,7 +446,7 @@ int main()
 
         switched_model |= loaded_model_first_ids[curr_model_index] == -1;
 
-        ImGui::SetNextWindowSize(ImVec2(400, 325), ImGuiSetCond_Once);
+        ImGui::SetNextWindowSize(ImVec2(400, 350), ImGuiSetCond_Once);
         if (ImGui::Begin("Toolbox"))
         {
             ImGui::Checkbox("Show tiles", &show_tiles);
@@ -473,6 +484,54 @@ int main()
                 }
             }
 
+            if (!recording_camera)
+            {
+                if (ImGui::Button("Start recording camera"))
+                {
+                    recording_camera = true;
+                }
+
+                ImGui::SameLine();
+                if (ImGui::Button("Run camera path benchmark"))
+                {
+                    std::string recording_filename = GetOpenFileNameEasy();
+                    if (!recording_filename.empty())
+                    {
+                        FILE* f = fopen(recording_filename.c_str(), "rb");
+                        uint32_t num_views;
+                        fread(&num_views, sizeof(num_views), 1, f);
+                        benchmark_views.resize(num_views);
+                        fread(benchmark_views.data(), benchmark_views.size() * sizeof(benchmark_views[0]), 1, f);
+                        fclose(f);
+
+                        running_benchmark = true;
+                        benchmark_view_index = 0;
+                        benchmark_framebuffer_pcs.clear();
+                        benchmark_framebuffer_tile_pcs.clear();
+                        benchmark_renderer_pcs.clear();
+                    }
+                }
+            }
+            else
+            {
+                if (ImGui::Button("Stop recording camera"))
+                {
+                    recording_camera = false;
+
+                    std::string recording_filename = GetSaveFileNameEasy();
+                    if (!recording_filename.empty())
+                    {
+                        FILE* f = fopen(recording_filename.c_str(), "wb");
+                        uint32_t num_recordings = (uint32_t)recorded_camera_views.size();
+                        fwrite(&num_recordings, sizeof(num_recordings), 1, f);
+                        fwrite(recorded_camera_views.data(), recorded_camera_views.size() * sizeof(recorded_camera_views[0]), 1, f);
+                        fclose(f);
+                    }
+
+                    recorded_camera_views.clear();
+                }
+            }
+
             if (ImGui::Button("Take screenshot"))
             {
                 screenshot_filename = GetSaveFileNameEasy();
@@ -493,6 +552,74 @@ int main()
             }
         }
         ImGui::End();
+
+        if (running_benchmark && benchmark_view_index >= (uint32_t)benchmark_views.size())
+        {
+            std::string benchmark_filename = GetSaveFileNameEasy();
+            if (!benchmark_filename.empty())
+            {
+                FILE* f = fopen(benchmark_filename.c_str(), "w");
+
+                fprintf(f, "%s\n", all_model_names[curr_model_index]);
+
+                std::vector<const char*> renderer_pc_names(renderer_get_num_perfcounters(rd));
+                renderer_get_perfcounter_names(rd, renderer_pc_names.data());
+                
+                std::vector<const char*> framebuffer_pc_names(framebuffer_get_num_perfcounters(fb));
+                framebuffer_get_perfcounter_names(fb, framebuffer_pc_names.data());
+
+                std::vector<const char*> framebuffer_tile_pc_names(framebuffer_get_num_tile_perfcounters(fb));
+                framebuffer_get_tile_perfcounter_names(fb, framebuffer_tile_pc_names.data());
+
+                std::vector<const char*> all_names;
+                all_names.insert(end(all_names), begin(renderer_pc_names), end(renderer_pc_names));
+                all_names.insert(end(all_names), begin(framebuffer_pc_names), end(framebuffer_pc_names));
+                all_names.insert(end(all_names), begin(framebuffer_tile_pc_names), end(framebuffer_tile_pc_names));
+
+                for (size_t i = 0; i < all_names.size(); i++)
+                {
+                    fprintf(f, ",%s", all_names[i]);
+                }
+                fprintf(f, "\n");
+
+                std::vector<uint64_t> summed_tile_pcs(benchmark_views.size() * framebuffer_get_num_tile_perfcounters(fb));
+                for (size_t i = 0; i < benchmark_views.size(); i++)
+                {
+                    for (size_t j = 0; j < framebuffer_get_num_tile_perfcounters(fb) * framebuffer_get_total_num_tiles(fb); j++)
+                    {
+                        summed_tile_pcs[i * framebuffer_get_num_tile_perfcounters(fb) + (j % framebuffer_get_num_tile_perfcounters(fb))] += benchmark_framebuffer_tile_pcs[i * framebuffer_get_num_tile_perfcounters(fb) * framebuffer_get_total_num_tiles(fb) + j];
+                    }
+                }
+
+                // convert to microseconds
+                for (uint64_t& pc : benchmark_renderer_pcs)
+                    pc = pc * 1000000 / renderer_get_perfcounter_frequency(rd);
+
+                for (uint64_t& pc : benchmark_framebuffer_pcs)
+                    pc = pc * 1000000 / framebuffer_get_perfcounter_frequency(fb);
+
+                for (uint64_t& pc : summed_tile_pcs)
+                    pc = pc * 1000000 / framebuffer_get_perfcounter_frequency(fb);
+
+                for (size_t view_i = 0; view_i < benchmark_views.size(); view_i++)
+                {
+                    std::vector<uint64_t> all_pcs;
+                    all_pcs.insert(end(all_pcs), begin(benchmark_renderer_pcs) + view_i * renderer_get_num_perfcounters(rd), begin(benchmark_renderer_pcs) + (view_i + 1) * renderer_get_num_perfcounters(rd));
+                    all_pcs.insert(end(all_pcs), begin(benchmark_framebuffer_pcs) + view_i * framebuffer_get_num_perfcounters(fb), begin(benchmark_framebuffer_pcs) + (view_i + 1)* framebuffer_get_num_perfcounters(fb));
+                    all_pcs.insert(end(all_pcs), begin(summed_tile_pcs) + view_i * framebuffer_get_num_tile_perfcounters(fb), begin(summed_tile_pcs) + (view_i + 1) * framebuffer_get_num_tile_perfcounters(fb));
+
+                    for (size_t i = 0; i < all_pcs.size(); i++)
+                    {
+                        fprintf(f, ",%llu", all_pcs[i]);
+                    }
+                    fprintf(f, "\n");
+                }
+
+                fclose(f);
+            }
+
+            running_benchmark = false;
+        }
 
         if (switched_model)
         {
@@ -562,7 +689,20 @@ int main()
             {
                 view_s1516[i] = s1516_flt(view[i]);
             }
+
+            if (running_benchmark)
+            {
+                // ignore user input and use the camera from the fixed path
+                memcpy(view_s1516, &benchmark_views[benchmark_view_index], sizeof(view_s1516));
+            }
+
             scene_set_view(sc, view_s1516);
+
+            if (recording_camera)
+            {
+                recorded_camera_views.emplace_back();
+                std::memcpy(recorded_camera_views.back().data(), view_s1516, sizeof(view_s1516));
+            }
         }
 
         POINT screencursor = cursor;
@@ -658,7 +798,7 @@ int main()
 
         if (show_perfheatmap)
         {
-            std::vector<tile_perfcounters_t> tile_pcs(framebuffer_get_total_num_tiles(fb));
+            std::vector<uint64_t> tile_pcs(framebuffer_get_total_num_tiles(fb) * framebuffer_get_num_tile_perfcounters(fb));
             framebuffer_get_tile_perfcounters(fb, tile_pcs.data());
 
             std::vector<uint64_t> tile_summedticks(framebuffer_get_total_num_tiles(fb));
@@ -667,7 +807,7 @@ int main()
             for (size_t i = 0; i < tile_summedticks.size(); i++)
             {
                 const uint64_t* u64_src = (const uint64_t*)&tile_pcs[i];
-                for (size_t j = 0; j < sizeof(tile_perfcounters_t) / sizeof(uint64_t); j++)
+                for (size_t j = 0; j < framebuffer_get_num_tile_perfcounters(fb); j++)
                 {
                     tile_summedticks[i] += u64_src[j];
                 }
@@ -800,66 +940,64 @@ int main()
         {
             // Renderer performance
             {
-                renderer_perfcounters_t pcs;
-                renderer_get_perfcounters(rd, &pcs);
-
+                std::vector<uint64_t> pcs(renderer_get_num_perfcounters(rd));
+                std::vector<const char*> pc_names(renderer_get_num_perfcounters(rd));
+                renderer_get_perfcounters(rd, pcs.data());
+                renderer_get_perfcounter_names(rd, pc_names.data());
                 uint64_t pcf = renderer_get_perfcounter_frequency(rd);
-
-                auto to_us = [pcf](uint64_t pc)
-                {
-                    return pc * 1000000 / pcf;
-                };
+                for (uint64_t& pc : pcs)
+                    pc = pc * 1000000 / pcf;
 
                 if (ImGui::CollapsingHeader("Renderer", ImGuiTreeNodeFlags_DefaultOpen))
                 {
-                    ImGui::Text("MVP transform: %u us", to_us(pcs.mvptransform));
+                    for (size_t i = 0; i < pcs.size(); i++)
+                    {
+                        ImGui::Text("%s: %u us", pc_names[i], pcs[i]);
+                    }
                 }
             }
 
             // Rasterizer performance
             {
-                framebuffer_perfcounters_t pcs;
-                framebuffer_get_perfcounters(fb, &pcs);
-
-                std::vector<tile_perfcounters_t> tile_pcs(framebuffer_get_total_num_tiles(fb));
-                framebuffer_get_tile_perfcounters(fb, tile_pcs.data());
-
                 uint64_t pcf = framebuffer_get_perfcounter_frequency(fb);
 
-                auto to_us = [pcf](uint64_t pc)
-                {
-                    return pc * 1000000 / pcf;
-                };
+                std::vector<uint64_t> pcs(framebuffer_get_num_perfcounters(fb));
+                std::vector<const char*> pc_names(framebuffer_get_num_perfcounters(fb));
+                framebuffer_get_perfcounters(fb, pcs.data());
+                framebuffer_get_perfcounter_names(fb, pc_names.data());
+                for (uint64_t& pc : pcs)
+                    pc = pc * 1000000 / pcf;
+
+                std::vector<uint64_t> tile_pcs(framebuffer_get_total_num_tiles(fb) * framebuffer_get_num_tile_perfcounters(fb));
+                std::vector<const char*> tile_pc_names(framebuffer_get_num_tile_perfcounters(fb));
+                framebuffer_get_tile_perfcounters(fb, tile_pcs.data());
+                framebuffer_get_tile_perfcounter_names(fb, tile_pc_names.data());
+                for (uint64_t& pc : tile_pcs)
+                    pc = pc * 1000000 / pcf;
 
                 if (ImGui::CollapsingHeader("Setup counters", ImGuiTreeNodeFlags_DefaultOpen))
                 {
-                    ImGui::Text("Clipping: %u us", to_us(pcs.clipping));
-                    ImGui::Text("Common setup: %u us", to_us(pcs.common_setup));
-                    ImGui::Text("Small tri setup: %u us", to_us(pcs.smalltri_setup));
-                    ImGui::Text("Large tri setup: %u us", to_us(pcs.largetri_setup));
+                    for (size_t i = 0; i < pcs.size(); i++)
+                    {
+                        ImGui::Text("%s: %u us", pc_names[i], pcs[i]);
+                    }
                 }
 
                 if (ImGui::CollapsingHeader("Summed per-tile counters", ImGuiTreeNodeFlags_DefaultOpen))
                 {
-                    tile_perfcounters_t summed_tpcs;
-                    memset(&summed_tpcs, 0, sizeof(tile_perfcounters_t));
-                    for (const tile_perfcounters_t& tpcs : tile_pcs)
+                    std::vector<uint64_t> summed_tpcs(framebuffer_get_num_tile_perfcounters(fb));
+                    for (size_t j = 0; j < framebuffer_get_total_num_tiles(fb); j++)
                     {
-                        const uint64_t* src_u64 = (const uint64_t*)&tpcs;
-                        uint64_t* dst_u64 = (uint64_t*)&summed_tpcs;
-                        for (uint32_t i = 0; i < sizeof(tile_perfcounters_t) / sizeof(uint64_t); i++)
+                        for (size_t i = 0; i < framebuffer_get_num_tile_perfcounters(fb); i++)
                         {
-                            dst_u64[i] += src_u64[i];
+                            summed_tpcs[i] += tile_pcs[j * framebuffer_get_num_tile_perfcounters(fb) + i];
                         }
                     }
 
-                    ImGui::Text("Small tri tile raster: %u us", to_us(summed_tpcs.smalltri_tile_raster));
-                    ImGui::Text("Small tri coarse raster: %u us", to_us(summed_tpcs.smalltri_coarse_raster));
-                    ImGui::Text("Large tri tile raster: %u us", to_us(summed_tpcs.largetri_tile_raster));
-                    ImGui::Text("Large tri coarse raster: %u us", to_us(summed_tpcs.largetri_coarse_raster));
-                    ImGui::Text("Command buffer push: %u us", to_us(summed_tpcs.cmdbuf_pushcmd));
-                    ImGui::Text("Command buffer resolve: %u us", to_us(summed_tpcs.cmdbuf_resolve));
-                    ImGui::Text("Clear: %u us", to_us(summed_tpcs.clear));
+                    for (size_t i = 0; i < summed_tpcs.size(); i++)
+                    {
+                        ImGui::Text("%s: %u us", tile_pc_names[i], summed_tpcs[i]);
+                    }
                 }
 
                 if (ImGui::CollapsingHeader("Specific per-tile counters", ImGuiTreeNodeFlags_DefaultOpen))
@@ -875,17 +1013,12 @@ int main()
                             int width_in_tiles = (fbwidth + 127) / 128;
                             int tile_i = tile_y * width_in_tiles + tile_x;
 
-                            tile_perfcounters_t tpcs = tile_pcs[tile_i];
-
                             ImGui::Text("Tile %d perfcounters:", tile_i);
 
-                            ImGui::Text("Small tri tile raster: %u us", to_us(tpcs.smalltri_tile_raster));
-                            ImGui::Text("Small tri coarse raster: %u us", to_us(tpcs.smalltri_coarse_raster));
-                            ImGui::Text("Large tri tile raster: %u us", to_us(tpcs.largetri_tile_raster));
-                            ImGui::Text("Large tri coarse raster: %u us", to_us(tpcs.largetri_coarse_raster));
-                            ImGui::Text("Command buffer push: %u us", to_us(tpcs.cmdbuf_pushcmd));
-                            ImGui::Text("Command buffer resolve: %u us", to_us(tpcs.cmdbuf_resolve));
-                            ImGui::Text("Clear: %u us", to_us(tpcs.clear));
+                            for (size_t i = 0; i < framebuffer_get_num_tile_perfcounters(fb); i++)
+                            {
+                                ImGui::Text("%s: %u us", tile_pc_names[i], tile_pcs[framebuffer_get_num_tile_perfcounters(fb) * tile_i + i]);
+                            }
                         }
                     }
                 }
@@ -894,6 +1027,26 @@ int main()
         ImGui::End();
 
         ImGui::Render();
+
+        if (running_benchmark)
+        {
+            // Renderer PCs
+            {
+                benchmark_renderer_pcs.resize(benchmark_renderer_pcs.size() + renderer_get_num_perfcounters(rd));
+                renderer_get_perfcounters(rd, &benchmark_renderer_pcs[benchmark_renderer_pcs.size() - renderer_get_num_perfcounters(rd)]);
+            }
+
+            // Framebuffer PCs
+            {
+                benchmark_framebuffer_pcs.resize(benchmark_framebuffer_pcs.size() + framebuffer_get_num_perfcounters(fb));
+                framebuffer_get_perfcounters(fb, &benchmark_framebuffer_pcs[benchmark_framebuffer_pcs.size() - framebuffer_get_num_perfcounters(fb)]);
+                
+                benchmark_framebuffer_tile_pcs.resize(benchmark_framebuffer_tile_pcs.size() + framebuffer_get_total_num_tiles(fb) * framebuffer_get_num_tile_perfcounters(fb));
+                framebuffer_get_tile_perfcounters(fb, &benchmark_framebuffer_tile_pcs[benchmark_framebuffer_tile_pcs.size() - framebuffer_get_total_num_tiles(fb) * framebuffer_get_num_tile_perfcounters(fb)]);
+            }
+
+            benchmark_view_index++;
+        }
 
         SwapBuffers(GetDC(g_hWnd));
 

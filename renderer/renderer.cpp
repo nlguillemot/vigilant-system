@@ -67,6 +67,17 @@ typedef struct scene_t
     int32_t proj[16];
 } scene_t;
 
+typedef struct renderer_perfcounters_t
+{
+    uint64_t mvptransform;
+} renderer_perfcounters_t;
+
+const char* kRendererPerfCounterNames[] =  {
+    "mvptransform"
+};
+
+static_assert(sizeof(kRendererPerfCounterNames) / sizeof(kRendererPerfCounterNames) == sizeof(renderer_perfcounters_t) / sizeof(uint64_t), "Renderer names count");
+
 typedef struct renderer_t
 {
     framebuffer_t* fb;
@@ -228,11 +239,27 @@ void renderer_reset_perfcounters(renderer_t* rd)
     memset(&rd->perfcounters, 0, sizeof(renderer_perfcounters_t));
 }
 
-void renderer_get_perfcounters(renderer_t* rd, renderer_perfcounters_t* pcs)
+int32_t renderer_get_num_perfcounters(renderer_t* rd)
+{
+    assert(rd);
+
+    return sizeof(rd->perfcounters) / sizeof(uint64_t);
+}
+
+void renderer_get_perfcounters(renderer_t* rd, uint64_t* pcs)
 {
     assert(rd);
     assert(pcs);
-    *pcs = rd->perfcounters;
+
+    memcpy(pcs, &rd->perfcounters, sizeof(rd->perfcounters));
+}
+
+void renderer_get_perfcounter_names(renderer_t* rd, const char** names)
+{
+    assert(rd);
+    assert(names);
+
+    memcpy(names, kRendererPerfCounterNames, sizeof(kRendererPerfCounterNames));
 }
 
 scene_t* new_scene()

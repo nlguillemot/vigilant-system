@@ -49,33 +49,15 @@ RASTERIZER_API void framebuffer_draw_indexed(
     const uint32_t* indices,
     uint32_t num_indices);
 
-typedef struct framebuffer_perfcounters_t
-{
-    uint64_t clipping;
-    uint64_t common_setup;
-    uint64_t smalltri_setup;
-    uint64_t largetri_setup;
-} framebuffer_perfcounters_t;
-
-typedef struct tile_perfcounters_t
-{
-    uint64_t smalltri_tile_raster;
-    uint64_t smalltri_coarse_raster;
-
-    uint64_t largetri_tile_raster;
-    uint64_t largetri_coarse_raster;
-
-    uint64_t cmdbuf_pushcmd;
-    uint64_t cmdbuf_resolve;
-
-    uint64_t clear;
-} tile_perfcounters_t;
-
 RASTERIZER_API int32_t framebuffer_get_total_num_tiles(framebuffer_t* fb); // to know how big an array to pass to get_tile_perfcounters
 RASTERIZER_API uint64_t framebuffer_get_perfcounter_frequency(framebuffer_t* fb);
 RASTERIZER_API void framebuffer_reset_perfcounters(framebuffer_t* fb);
-RASTERIZER_API void framebuffer_get_perfcounters(framebuffer_t* fb, framebuffer_perfcounters_t* pcs);
-RASTERIZER_API void framebuffer_get_tile_perfcounters(framebuffer_t* fb, tile_perfcounters_t tile_pcs[]); // grabs perfcounters for ALL tiles
+RASTERIZER_API int32_t framebuffer_get_num_perfcounters(framebuffer_t* fb);
+RASTERIZER_API void framebuffer_get_perfcounters(framebuffer_t* fb, uint64_t* pcs);
+RASTERIZER_API void framebuffer_get_perfcounter_names(framebuffer_t* fb, const char** names);
+RASTERIZER_API int32_t framebuffer_get_num_tile_perfcounters(framebuffer_t* fb);
+RASTERIZER_API void framebuffer_get_tile_perfcounter_names(framebuffer_t* fb, const char** names);
+RASTERIZER_API void framebuffer_get_tile_perfcounters(framebuffer_t* fb, uint64_t* tile_pcs); // grabs perfcounters for ALL tiles: (total_num_tiles * num_tile_perfcounters) counters.
 
 #ifdef __cplusplus
 } // end extern "C"
