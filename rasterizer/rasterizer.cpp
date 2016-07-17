@@ -24,6 +24,13 @@
 #include <Windows.h>
 #endif
 
+// Configuration
+// ------------------
+// Which instruction set to use
+// Haswell New Instructions (AVX2)
+// #define USE_HSWNI
+// ------------------
+
 // Sized according to the Larrabee rasterizer's description
 // The tile size must be up to 128x128
 //    this is because any edge that isn't trivially accepted or rejected
@@ -55,7 +62,7 @@
 #define TILE_COMMAND_BUFFER_SIZE_IN_DWORDS 128
 
 // parallel bit deposit low-order source bits according to mask bits
-#ifdef __AVX2__
+#ifdef USE_HSWNI
 __forceinline uint32_t pdep_u32(uint32_t source, uint32_t mask)
 {
     // AVX2 implementation
@@ -81,8 +88,35 @@ __forceinline uint32_t pdep_u32(uint32_t source, uint32_t mask)
 }
 #endif
 
+// parallel bit extract low-order source bits according to mask bits
+#ifdef USE_HSWNI
+__forceinline uint32_t pext_u32(uint32_t source, uint32_t mask)
+{
+    // AVX2 implementation
+    return _pext_u32(source, mask);
+}
+#else
+__forceinline uint32_t pext_u32(uint32_t source, uint32_t mask)
+{
+    // generic implementation
+    uint32_t temp = source;
+    uint32_t dest = 0;
+    uint32_t m = 0, k = 0;
+    while (m < 32)
+    {
+        if (mask & (1 << m))
+        {
+            dest = (dest & ~(1 << k)) | (((temp & (1 << m)) >> m) << k);
+            k = k + 1;
+        }
+        m = m + 1;
+    }
+    return dest;
+}
+#endif
+
 // count leading zeros (32 bits)
-#ifdef __AVX2__
+#ifdef USE_HSWNI
 __forceinline uint32_t lzcnt(uint32_t value)
 {
     // AVX2 implementation
@@ -119,7 +153,7 @@ __forceinline uint32_t lzcnt(uint32_t value)
 #endif
 
 // count leading zeros (64 bits)
-#ifdef __AVX2__
+#ifdef USE_HSWNI
 __forceinline uint64_t lzcnt64(uint64_t value)
 {
     return __lzcnt64(value);
@@ -424,13 +458,13 @@ framebuffer_t* new_framebuffer(int32_t width, int32_t height)
     fb->pixels_per_row_of_tiles = padded_width_in_pixels * TILE_WIDTH_IN_PIXELS;
     fb->pixels_per_slice = padded_height_in_pixels / TILE_WIDTH_IN_PIXELS * fb->pixels_per_row_of_tiles;
 
-    fb->backbuffer = (uint32_t*)malloc(fb->pixels_per_slice * sizeof(uint32_t));
+    fb->backbuffer = (uint32_t*)_aligned_malloc(fb->pixels_per_slice * sizeof(uint32_t), 32);
     assert(fb->backbuffer);
 
     // clear to black/transparent initially
     memset(fb->backbuffer, 0, fb->pixels_per_slice * sizeof(uint32_t));
 
-    fb->depthbuffer = (uint32_t*)malloc(fb->pixels_per_slice * sizeof(uint32_t));
+    fb->depthbuffer = (uint32_t*)_aligned_malloc(fb->pixels_per_slice * sizeof(uint32_t), 32);
     assert(fb->depthbuffer);
     
     // clear to infinity initially
@@ -470,11 +504,12 @@ void delete_framebuffer(framebuffer_t* fb)
     free(fb->tile_perfcounters);
     free(fb->tile_cmdbufs);
     free(fb->tile_cmdpool);
-    free(fb->backbuffer);
+    _aligned_free(fb->depthbuffer);
+    _aligned_free(fb->backbuffer);
     free(fb);
 }
 
-static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32_t coarse_topleft_x, int32_t coarse_topleft_y, const tilecmd_drawsmalltri_t* drawcmd)
+static void draw_coarse_block_smalltri_scalar(framebuffer_t* fb, int32_t coarse_dst_i, const tilecmd_drawsmalltri_t* drawcmd)
 {
     uint64_t coarse_start_pc = qpc();
 
@@ -484,7 +519,10 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
         edges[v] = drawcmd->edges[v];
     }
 
-    int32_t tile_start_i = PIXELS_PER_TILE * tile_id;
+    int32_t tile_id = coarse_dst_i / PIXELS_PER_TILE;
+    int32_t tile_start_i = tile_id * PIXELS_PER_TILE;
+    int32_t coarse_topleft_x = pext_u32(coarse_dst_i - tile_start_i, TILE_X_SWIZZLE_MASK);
+    int32_t coarse_topleft_y = pext_u32(coarse_dst_i - tile_start_i, TILE_Y_SWIZZLE_MASK);
 
     for (
         int32_t fineblock_y = coarse_topleft_y, fineblock_ybits = pdep_u32(coarse_topleft_y, TILE_Y_SWIZZLE_MASK);
@@ -504,7 +542,6 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
         {
             int32_t dst_i = tile_start_i + (fineblock_ybits | fineblock_xbits);
 
-            // TODO: rasterize whole fine blocks at a time rather than pixels at a time
             int32_t pixel_discarded = 0;
             for (int32_t v = 0; v < 3; v++)
             {
@@ -581,8 +618,213 @@ static void draw_coarse_block_smalltri(framebuffer_t* fb, int32_t tile_id, int32
         }
     }
 
-    // Add the drawing time to the small triangle rasterization timer
     fb->tile_perfcounters[tile_id].smalltri_coarse_raster += qpc() - coarse_start_pc;
+}
+
+static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i, const tilecmd_drawsmalltri_t* drawcmd)
+{
+    // pixels are stored in fine blocks according to a morton code ordering:
+    //  0  1  4  5
+    //  2  3  6  7
+    //  8  9 12 13
+    // 10 11 14 15
+    // Thus, the 4x4 fine block is rasterized in two iterations.
+    // one iteration for the top 4x2, and one for the bottom 4x2.
+
+    // broadcast edge equation offsets into vectors
+    __m256i edge_dxs[3], edge_dys[3], edge_2dys[3];
+    edge_dxs[0] = _mm256_set1_epi32(drawcmd->edge_dxs[0]);
+    edge_dxs[1] = _mm256_set1_epi32(drawcmd->edge_dxs[1]);
+    edge_dxs[2] = _mm256_set1_epi32(drawcmd->edge_dxs[2]);
+    edge_dys[0] = _mm256_set1_epi32(drawcmd->edge_dys[0]);
+    edge_dys[1] = _mm256_set1_epi32(drawcmd->edge_dys[1]);
+    edge_dys[2] = _mm256_set1_epi32(drawcmd->edge_dys[2]);
+    edge_2dys[0] = _mm256_set1_epi32(drawcmd->edge_dys[0] * 2);
+    edge_2dys[1] = _mm256_set1_epi32(drawcmd->edge_dys[1] * 2);
+    edge_2dys[2] = _mm256_set1_epi32(drawcmd->edge_dys[2] * 2);
+
+    // initialize edge equations for the 4x2 quad according to the swizzle pattern
+    // pixels 2,3,6,7 are offset down by 1edy initially
+    // pixels 1,3 and 4,6 and 5,7 are offset right by 1edx, 2edx, 3edx, respectively
+    const __m256i edge_y_offset_mask = _mm256_set_epi32(-1, -1, 0, 0, -1, -1, 0, 0);
+    const __m256i edge_y_offset_multiplier = _mm256_set_epi32(3, 2, 3, 2, 1, 0, 1, 0);
+
+    __m256i edges[3];
+    edges[0] = _mm256_set1_epi32(drawcmd->edges[0]);
+    edges[1] = _mm256_set1_epi32(drawcmd->edges[1]);
+    edges[2] = _mm256_set1_epi32(drawcmd->edges[2]);
+
+    // initial y offset
+    edges[0] = _mm256_add_epi32(edges[0], _mm256_and_si256(edge_dys[0], edge_y_offset_mask));
+    edges[1] = _mm256_add_epi32(edges[1], _mm256_and_si256(edge_dys[1], edge_y_offset_mask));
+    edges[2] = _mm256_add_epi32(edges[2], _mm256_and_si256(edge_dys[2], edge_y_offset_mask));
+
+    // initial x offset
+    edges[0] = _mm256_add_epi32(edges[0], _mm256_mul_epi32(edge_dxs[0], _mm256_set_epi32(3, 2, 3, 2, 1, 0, 1, 0)));
+    edges[1] = _mm256_add_epi32(edges[1], _mm256_mul_epi32(edge_dxs[1], _mm256_set_epi32(3, 2, 3, 2, 1, 0, 1, 0)));
+    edges[2] = _mm256_add_epi32(edges[2], _mm256_mul_epi32(edge_dxs[2], _mm256_set_epi32(3, 2, 3, 2, 1, 0, 1, 0)));
+
+    // pre-compute triarea2 related stuff
+    int32_t rcp_triarea2_mantissa = drawcmd->rcp_triarea2 & 0xFFFF;
+    int32_t rcp_triarea2_exponent = (drawcmd->rcp_triarea2 & 0xFF0000) >> 16;
+    int32_t rcp_triarea2_rshift = rcp_triarea2_exponent - 127;
+    __m256i rcp_triarea2_mantissa256 = _mm256_set1_epi32(rcp_triarea2_mantissa);
+
+    // pre-compute depth related stuff
+    __m256i d0 = _mm256_set1_epi16(drawcmd->vert_Zs[0] << 15);
+    __m256i dd1 = _mm256_set1_epi32(drawcmd->vert_Zs[1] - drawcmd->vert_Zs[0]);
+    __m256i dd2 = _mm256_set1_epi32(drawcmd->vert_Zs[2] - drawcmd->vert_Zs[0]);
+
+    // rasterize both fine block halves
+    for (int fineblock_half = 0; fineblock_half < 2; fineblock_half++)
+    {
+        // compute all pixels passing the edge equation
+        __m256i pixels_passing = _mm256_cmpgt_epi32(_mm256_setzero_si256(), edges[0]);
+        pixels_passing = _mm256_and_si256(pixels_passing, _mm256_cmpgt_epi32(_mm256_setzero_si256(), edges[1]));
+        pixels_passing = _mm256_and_si256(pixels_passing, _mm256_cmpgt_epi32(_mm256_setzero_si256(), edges[2]));
+
+        // early-out if no pixels pass the test
+        if (!_mm256_movemask_epi8(pixels_passing))
+            goto end_fineblock_half;
+
+        // shift edge equations to be on the same scale as the triangle area
+        __m256i shifted_e2 = _mm256_sub_epi32(_mm256_setzero_si256(), edges[2]);
+        __m256i shifted_e0 = _mm256_sub_epi32(_mm256_setzero_si256(), edges[0]);
+        if (rcp_triarea2_rshift < 0)
+        {
+            shifted_e2 = _mm256_slli_epi32(shifted_e2, -rcp_triarea2_rshift);
+            shifted_e0 = _mm256_slli_epi32(shifted_e0, -rcp_triarea2_rshift);
+        }
+        else
+        {
+            shifted_e2 = _mm256_srli_epi32(shifted_e2, rcp_triarea2_rshift);
+            shifted_e0 = _mm256_srli_epi32(shifted_e0, rcp_triarea2_rshift);
+        }
+
+        // compute non-perspective-correct barycentrics for vertices 1 and 2
+        __m256i u = _mm256_mulhrs_epi16(shifted_e2, rcp_triarea2_mantissa256);
+        __m256i v = _mm256_mulhrs_epi16(shifted_e0, rcp_triarea2_mantissa256);
+
+        // ensure barycentrics sum to 1
+        __m256i one_minus_u = _mm256_sub_epi32(_mm256_set1_epi32(0x7FFF), u);
+        v = _mm256_min_epi32(v, one_minus_u);
+
+        // not related to vertex w. Just third barycentric. Bad naming.
+        __m256i w = _mm256_sub_epi32(_mm256_set1_epi32(0x7FFF), _mm256_add_epi32(u, v));
+
+        // compute interpolated depth
+        __m256i src_depth = d0;
+        src_depth = _mm256_add_epi32(src_depth, _mm256_mulhrs_epi16(u, dd1));
+        src_depth = _mm256_add_epi32(src_depth, _mm256_mulhrs_epi16(v, dd2));
+
+        __m256i dst_depth = _mm256_load_si256((__m256i*)&fb->depthbuffer[fine_dst_i]);
+        __m256i depth_pass = _mm256_cmpeq_epi32(_mm256_cmpgt_epi32(dst_depth, src_depth), _mm256_setzero_si256());
+
+        // early out if all depth tests fail
+        int depth_pass_mask = _mm256_movemask_epi8(depth_pass);
+        if (!depth_pass_mask)
+            goto end_fineblock_half;
+
+        // blend depth into depthbuffer
+        __m256i blended_depths = _mm256_or_si256(_mm256_and_si256(depth_pass, src_depth), _mm256_andnot_si256(depth_pass, dst_depth));
+        _mm256_store_si256((__m256i*)&fb->depthbuffer[fine_dst_i], blended_depths);
+
+        // set color based on barycentrics.
+        __m256i src_color = _mm256_set1_epi32(0xFF << 24);
+        src_color = _mm256_or_si256(src_color, _mm256_slli_epi32(_mm256_srli_epi32(_mm256_mul_epi32(w, _mm256_set1_epi32(0xFF)), 15), 16));
+        src_color = _mm256_or_si256(src_color, _mm256_slli_epi32(_mm256_srli_epi32(_mm256_mul_epi32(u, _mm256_set1_epi32(0xFF)), 15), 16));
+        src_color = _mm256_or_si256(src_color, _mm256_slli_epi32(_mm256_srli_epi32(_mm256_mul_epi32(v, _mm256_set1_epi32(0xFF)), 15), 16));
+
+        // write color into backbuffer
+        _mm256_maskstore_epi32((int*)&fb->backbuffer[fine_dst_i], src_color, depth_pass);
+
+    end_fineblock_half:
+        // offset edge equations down for the second half
+        edges[0] = _mm256_add_epi32(edges[0], edge_2dys[0]);
+        edges[1] = _mm256_add_epi32(edges[1], edge_2dys[1]);
+        edges[2] = _mm256_add_epi32(edges[2], edge_2dys[2]);
+
+        // offset destination to the next half of the fine block
+        fine_dst_i += PIXELS_PER_FINE_BLOCK / 2;
+    }
+}
+
+static void draw_coarse_block_smalltri_avx2(framebuffer_t* fb, int32_t coarse_dst_i, const tilecmd_drawsmalltri_t* drawcmd)
+{
+    uint64_t coarse_start_pc = qpc();
+    
+    // coarse blocks are made out of 4x4 fine blocks, organized as:
+    //  0  1  4  5
+    //  2  3  6  7
+    //  8  9 12 13
+    // 10 11 14 15
+    // therefore, coarse blocks are rasterized by shifting around the fine block's edge equations.
+
+    // broadcast edge equation offsets into vectors
+    __m256i fine_edge_dxs[3], fine_edge_dys[3], fine_edge_2dys[3];
+    fine_edge_dxs[0] = _mm256_set1_epi32(drawcmd->edge_dxs[0] * FINE_BLOCK_WIDTH_IN_PIXELS);
+    fine_edge_dxs[1] = _mm256_set1_epi32(drawcmd->edge_dxs[1] * FINE_BLOCK_WIDTH_IN_PIXELS);
+    fine_edge_dxs[2] = _mm256_set1_epi32(drawcmd->edge_dxs[2] * FINE_BLOCK_WIDTH_IN_PIXELS);
+    fine_edge_dys[0] = _mm256_set1_epi32(drawcmd->edge_dys[0] * FINE_BLOCK_WIDTH_IN_PIXELS);
+    fine_edge_dys[1] = _mm256_set1_epi32(drawcmd->edge_dys[1] * FINE_BLOCK_WIDTH_IN_PIXELS);
+    fine_edge_dys[2] = _mm256_set1_epi32(drawcmd->edge_dys[2] * FINE_BLOCK_WIDTH_IN_PIXELS);
+    fine_edge_2dys[0] = _mm256_set1_epi32(drawcmd->edge_dys[0] * FINE_BLOCK_WIDTH_IN_PIXELS * 2);
+    fine_edge_2dys[1] = _mm256_set1_epi32(drawcmd->edge_dys[1] * FINE_BLOCK_WIDTH_IN_PIXELS * 2);
+    fine_edge_2dys[2] = _mm256_set1_epi32(drawcmd->edge_dys[2] * FINE_BLOCK_WIDTH_IN_PIXELS * 2);
+
+    // initialize edge equations for the 4x2 quad according to the swizzle pattern
+    // pixels 2,3,6,7 are offset down by 1edy initially
+    // pixels 1,3 and 4,6 and 5,7 are offset right by 1edx, 2edx, 3edx, respectively
+    const __m256i edge_y_offset_mask = _mm256_set_epi32(-1, -1, 0, 0, -1, -1, 0, 0);
+    const __m256i edge_y_offset_multiplier = _mm256_set_epi32(3, 2, 3, 2, 1, 0, 1, 0);
+
+    __m256i edges[3];
+    edges[0] = _mm256_set1_epi32(drawcmd->edges[0]);
+    edges[1] = _mm256_set1_epi32(drawcmd->edges[1]);
+    edges[2] = _mm256_set1_epi32(drawcmd->edges[2]);
+
+    // initial y offset
+    edges[0] = _mm256_add_epi32(edges[0], _mm256_and_si256(fine_edge_dys[0], edge_y_offset_mask));
+    edges[1] = _mm256_add_epi32(edges[1], _mm256_and_si256(fine_edge_dys[1], edge_y_offset_mask));
+    edges[2] = _mm256_add_epi32(edges[2], _mm256_and_si256(fine_edge_dys[2], edge_y_offset_mask));
+
+    // initial x offset
+    edges[0] = _mm256_add_epi32(edges[0], _mm256_mul_epi32(fine_edge_dxs[0], _mm256_set_epi32(3, 2, 3, 2, 1, 0, 1, 0)));
+    edges[1] = _mm256_add_epi32(edges[1], _mm256_mul_epi32(fine_edge_dxs[1], _mm256_set_epi32(3, 2, 3, 2, 1, 0, 1, 0)));
+    edges[2] = _mm256_add_epi32(edges[2], _mm256_mul_epi32(fine_edge_dxs[2], _mm256_set_epi32(3, 2, 3, 2, 1, 0, 1, 0)));
+
+    int32_t dst_i = coarse_dst_i;
+
+    for (int32_t coarseblock_half = 0; coarseblock_half < 2; coarseblock_half++)
+    {
+        // draw each fine block in the coarse block half
+        int32_t fineblock_edges[3][8];
+        _mm256_store_si256((__m256i*)&fineblock_edges[0][0], edges[0]);
+        _mm256_store_si256((__m256i*)&fineblock_edges[1][0], edges[1]);
+        _mm256_store_si256((__m256i*)&fineblock_edges[2][0], edges[2]);
+
+        tilecmd_drawsmalltri_t finecmd = *drawcmd;
+        for (int32_t i = 0; i < 8; i++)
+        {
+            finecmd.edges[0] = fineblock_edges[0][i];
+            finecmd.edges[1] = fineblock_edges[1][i];
+            finecmd.edges[2] = fineblock_edges[2][i];
+            
+            draw_fine_block_smalltri_avx2(fb, dst_i, &finecmd);
+
+            dst_i += PIXELS_PER_FINE_BLOCK;
+        }
+
+        edges[0] = _mm256_add_epi32(edges[0], fine_edge_2dys[0]);
+        edges[1] = _mm256_add_epi32(edges[1], fine_edge_2dys[1]);
+        edges[2] = _mm256_add_epi32(edges[2], fine_edge_2dys[2]);
+    }
+
+    fb->tile_perfcounters[coarse_dst_i / PIXELS_PER_TILE].smalltri_coarse_raster += qpc() - coarse_start_pc;
+}
+
+static void draw_tile_smalltri_avx2(framebuffer_t* fb, int32_t tile_id, const tilecmd_drawsmalltri_t* drawcmd)
+{
 }
 
 static void draw_tile_smalltri(framebuffer_t* fb, int32_t tile_id, const tilecmd_drawsmalltri_t* drawcmd)
@@ -628,11 +870,11 @@ static void draw_tile_smalltri(framebuffer_t* fb, int32_t tile_id, const tilecmd
                 cbargs.edges[v] = row_edges[v];
             }
 
-            int32_t coarse_topleft_x = tile_x * TILE_WIDTH_IN_PIXELS + cb_x * COARSE_BLOCK_WIDTH_IN_PIXELS;
-            int32_t coarse_topleft_y = tile_y * TILE_WIDTH_IN_PIXELS + cb_y * COARSE_BLOCK_WIDTH_IN_PIXELS;
+            int32_t dst_i = tile_id * PIXELS_PER_TILE;
+            dst_i += pdep_u32(cb_y * COARSE_BLOCK_WIDTH_IN_PIXELS, TILE_Y_SWIZZLE_MASK) | pdep_u32(cb_x * COARSE_BLOCK_WIDTH_IN_PIXELS, TILE_X_SWIZZLE_MASK);
             
             fb->tile_perfcounters[tile_id].smalltri_tile_raster += qpc() - tile_start_pc;
-            draw_coarse_block_smalltri(fb, tile_id, coarse_topleft_x, coarse_topleft_y, &cbargs);
+            draw_coarse_block_smalltri_scalar(fb, dst_i, &cbargs);
             tile_start_pc = qpc();
 
             for (int32_t v = 0; v < 3; v++)
@@ -682,7 +924,6 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
         {
             int32_t dst_i = tile_start_i + (fineblock_ybits | fineblock_xbits);
 
-            // TODO: rasterize whole fine blocks at a time rather than pixels at a time
             int32_t pixel_discarded = 0;
             for (int32_t v = 0; v < num_test_edges; v++)
             {
@@ -969,7 +1210,13 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
         else if (tilecmd_id == tilecmd_id_drawsmalltri)
         {
             fb->tile_perfcounters[tile_id].cmdbuf_resolve += qpc() - resolve_start_pc;
+
+#ifdef USE_HSWNI
+            draw_tile_smalltri_avx2(fb, tile_id, (tilecmd_drawsmalltri_t*)cmd);
+#else
             draw_tile_smalltri(fb, tile_id, (tilecmd_drawsmalltri_t*)cmd);
+#endif
+
             resolve_start_pc = qpc();
 
             cmd += sizeof(tilecmd_drawsmalltri_t) / sizeof(uint32_t);

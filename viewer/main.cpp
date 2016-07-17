@@ -292,14 +292,15 @@ layout(origin_upper_left) in vec4 gl_FragCoord;
 layout(location = 0) uniform int show_tiles;
 layout(location = 1) uniform int show_coarse;
 layout(location = 2) uniform int show_fine;
+out vec4 FragColor;
 void main() {
     uvec2 pos = uvec2(gl_FragCoord.xy);
     if (((pos.x & 0x7F) == 0 || (pos.y & 0x7F) == 0) && show_tiles != 0)
-        gl_FragColor = vec4(1,1,1,0.5);
+        FragColor = vec4(1,1,1,0.5);
     else if (((pos.x & 0xF) == 0 || (pos.y & 0xF) == 0) && show_coarse != 0)
-         gl_FragColor = vec4(1,0.7,0.7,0.5);
+         FragColor = vec4(1,0.7,0.7,0.5);
     else if (((pos.x & 0x3) == 0 || (pos.y & 0x3) == 0) && show_fine != 0)
-         gl_FragColor = vec4(0.7,1.0,0.7,0.5);
+         FragColor = vec4(0.7,1.0,0.7,0.5);
      else
          discard;
 }
@@ -328,6 +329,11 @@ int main()
         glShaderSource(gridfs, 1, &g_GridFS, NULL);
         glCompileShader(gridfs);
         glGetShaderiv(gridfs, GL_COMPILE_STATUS, &status);
+
+        GLint loglen;
+        glGetShaderiv(gridfs, GL_INFO_LOG_LENGTH, &loglen);
+        std::vector<char> log(loglen);
+        glGetShaderInfoLog(gridfs, (GLsizei)log.size(), 0, log.data());
         assert(status);
 
         gridsp = glCreateProgram();
