@@ -57,6 +57,12 @@
 #define TILE_X_SWIZZLE_MASK (0x55555555 & (PIXELS_PER_TILE - 1))
 #define TILE_Y_SWIZZLE_MASK (0xAAAAAAAA & (PIXELS_PER_TILE - 1))
 
+#define COARSE_BLOCK_X_SWIZZLE_MASK (TILE_X_SWIZZLE_MASK & (PIXELS_PER_COARSE_BLOCK - 1))
+#define COARSE_BLOCK_Y_SWIZZLE_MASK (TILE_Y_SWIZZLE_MASK & (PIXELS_PER_COARSE_BLOCK - 1))
+
+#define FINE_BLOCK_X_SWIZZLE_MASK (TILE_X_SWIZZLE_MASK & (PIXELS_PER_FINE_BLOCK - 1))
+#define FINE_BLOCK_Y_SWIZZLE_MASK (TILE_Y_SWIZZLE_MASK & (PIXELS_PER_FINE_BLOCK - 1))
+
 // If there are too many commands and this buffer gets filled up,
 // then the command buffer for that tile must be flushed.
 #define TILE_COMMAND_BUFFER_SIZE_IN_DWORDS 128
@@ -744,8 +750,11 @@ static void draw_fine_block_smalltri_scalar(framebuffer_t* fb, int32_t fine_dst_
     {
         edges[v] = drawcmd->edges[v];
     }
-
-    for (int32_t px_y = 0; px_y < FINE_BLOCK_WIDTH_IN_PIXELS; px_y++)
+    
+    for (
+        uint32_t px_y = 0, px_y_bits = 0;
+        px_y < FINE_BLOCK_WIDTH_IN_PIXELS;
+        px_y++, px_y_bits = (px_y_bits - FINE_BLOCK_Y_SWIZZLE_MASK) & FINE_BLOCK_Y_SWIZZLE_MASK)
     {
         int32_t edges_row[3];
         for (int32_t v = 0; v < 3; v++)
@@ -753,10 +762,12 @@ static void draw_fine_block_smalltri_scalar(framebuffer_t* fb, int32_t fine_dst_
             edges_row[v] = edges[v];
         }
 
-        for (int32_t px_x = 0; px_x < FINE_BLOCK_WIDTH_IN_PIXELS; px_x++)
+        for (
+            uint32_t px_x = 0, px_x_bits = 0;
+            px_x < FINE_BLOCK_WIDTH_IN_PIXELS;
+            px_x++, px_x_bits = (px_x_bits - FINE_BLOCK_X_SWIZZLE_MASK) & FINE_BLOCK_X_SWIZZLE_MASK)
         {
-            int32_t dst_i = fine_dst_i;
-            dst_i += pdep_u32(px_y, TILE_Y_SWIZZLE_MASK) | pdep_u32(px_x, TILE_X_SWIZZLE_MASK);
+            int32_t dst_i = fine_dst_i + (px_y_bits | px_x_bits);
 
             int32_t pixel_discarded = 0;
             for (int32_t v = 0; v < 3; v++)
@@ -853,7 +864,13 @@ static void draw_coarse_block_smalltri_scalar(framebuffer_t* fb, int32_t coarse_
         edges[v] = drawcmd->edges[v];
     }
 
-    for (int32_t fine_y = 0; fine_y < COARSE_BLOCK_WIDTH_IN_FINE_BLOCKS; fine_y++)
+    const uint32_t mask_x = pdep_u32(-FINE_BLOCK_WIDTH_IN_PIXELS, COARSE_BLOCK_X_SWIZZLE_MASK);
+    const uint32_t mask_y = pdep_u32(-FINE_BLOCK_WIDTH_IN_PIXELS, COARSE_BLOCK_Y_SWIZZLE_MASK);
+
+    for (
+        uint32_t fine_y = 0, fine_y_bits = 0;
+        fine_y < COARSE_BLOCK_WIDTH_IN_FINE_BLOCKS;
+        fine_y++, fine_y_bits = (fine_y_bits - mask_y) & mask_y)
     {
         int32_t edges_row[3];
         for (int32_t v = 0; v < 3; v++)
@@ -861,7 +878,10 @@ static void draw_coarse_block_smalltri_scalar(framebuffer_t* fb, int32_t coarse_
             edges_row[v] = edges[v];
         }
 
-        for (int32_t fine_x = 0; fine_x < COARSE_BLOCK_WIDTH_IN_FINE_BLOCKS; fine_x++)
+        for (
+            uint32_t fine_x = 0, fine_x_bits = 0;
+            fine_x < COARSE_BLOCK_WIDTH_IN_FINE_BLOCKS;
+            fine_x++, fine_x_bits = (fine_x_bits - mask_x) & mask_x)
         {
             tilecmd_drawsmalltri_t fbargs = *drawcmd;
 
@@ -870,8 +890,7 @@ static void draw_coarse_block_smalltri_scalar(framebuffer_t* fb, int32_t coarse_
                 fbargs.edges[v] = edges_row[v];
             }
 
-            int32_t dst_i = coarse_dst_i;
-            dst_i += pdep_u32(fine_y * FINE_BLOCK_WIDTH_IN_PIXELS, TILE_Y_SWIZZLE_MASK) | pdep_u32(fine_x * FINE_BLOCK_WIDTH_IN_PIXELS, TILE_X_SWIZZLE_MASK);
+            int32_t dst_i = coarse_dst_i + (fine_y_bits | fine_x_bits);
             draw_fine_block_smalltri_scalar(fb, dst_i, &fbargs);
 
             for (int32_t v = 0; v < 3; v++)
@@ -907,8 +926,15 @@ static void draw_tile_smalltri_scalar(framebuffer_t* fb, int32_t tile_id, const 
         edges[v] = drawcmd->edges[v];
     }
 
-    // figure out which coarse blocks pass the reject and accept tests
-    for (int32_t cb_y = 0; cb_y < TILE_WIDTH_IN_COARSE_BLOCKS; cb_y++)
+    const uint32_t mask_x = pdep_u32(-COARSE_BLOCK_WIDTH_IN_PIXELS, TILE_X_SWIZZLE_MASK);
+    const uint32_t mask_y = pdep_u32(-COARSE_BLOCK_WIDTH_IN_PIXELS, TILE_Y_SWIZZLE_MASK);
+
+    uint32_t tile_dst_i = tile_id * PIXELS_PER_TILE;
+
+    for (
+        uint32_t cb_y = 0, cb_y_bits = 0;
+        cb_y < TILE_WIDTH_IN_COARSE_BLOCKS;
+        cb_y++, cb_y_bits = (cb_y_bits - mask_y) & mask_y)
     {
         int32_t edges_row[3];
         for (int32_t v = 0; v < 3; v++)
@@ -916,7 +942,10 @@ static void draw_tile_smalltri_scalar(framebuffer_t* fb, int32_t tile_id, const 
             edges_row[v] = edges[v];
         }
 
-        for (int32_t cb_x = 0; cb_x < TILE_WIDTH_IN_COARSE_BLOCKS; cb_x++)
+        for (
+            uint32_t cb_x = 0, cb_x_bits = 0;
+            cb_x < TILE_WIDTH_IN_COARSE_BLOCKS;
+            cb_x++, cb_x_bits = (cb_x_bits - mask_x) & mask_x)
         {
             tilecmd_drawsmalltri_t cbargs = *drawcmd;
             
@@ -925,8 +954,7 @@ static void draw_tile_smalltri_scalar(framebuffer_t* fb, int32_t tile_id, const 
                 cbargs.edges[v] = edges_row[v];
             }
 
-            int32_t dst_i = tile_id * PIXELS_PER_TILE;
-            dst_i += pdep_u32(cb_y * COARSE_BLOCK_WIDTH_IN_PIXELS, TILE_Y_SWIZZLE_MASK) | pdep_u32(cb_x * COARSE_BLOCK_WIDTH_IN_PIXELS, TILE_X_SWIZZLE_MASK);
+            uint32_t dst_i = tile_dst_i + (cb_y_bits | cb_x_bits);
             
             fb->tile_perfcounters[tile_id].smalltri_tile_raster += qpc() - tile_start_pc;
             draw_coarse_block_smalltri_scalar(fb, dst_i, &cbargs);
