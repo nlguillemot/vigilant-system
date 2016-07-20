@@ -35,7 +35,8 @@
 // The tile size must be up to 128x128
 //    this is because any edge that isn't trivially accepted or rejected
 //    can be rasterized with 32 bits inside a 128x128 tile
-#define TILE_WIDTH_IN_PIXELS 128
+// moved it down to 64x64 since it allows more parallelism
+#define TILE_WIDTH_IN_PIXELS 64
 #define COARSE_BLOCK_WIDTH_IN_PIXELS 16
 #define FINE_BLOCK_WIDTH_IN_PIXELS 4
 
@@ -721,17 +722,11 @@ static void draw_tile_smalltri_avx2(framebuffer_t* fb, int32_t tile_id, const ti
 {
     uint64_t tile_start_pc = qpc();
 
-    // tiles are made out of 8x8 coarse blocks, organized as:
-    //  0  1  4  5 | 16 17 20 21
-    //  2  3  6  7 | 18 19 22 23
-    //  8  9 12 13 | 24 25 28 29
-    // 10 11 14 15 | 26 27 30 31
-    // -------------------------
-    // 32 33 36 37 | 48 49 52 53
-    // 34 35 38 39 | 50 51 54 55
-    // 40 41 44 45 | 56 57 60 61 
-    // 42 43 46 47 | 58 59 62 63
-
+    // tiles are made out of 4x4 coarse blocks, organized as:
+    //  0  1  4  5
+    //  2  3  6  7
+    //  8  9 12 13
+    // 10 11 14 15
     // therefore, tiles are rasterized by shifting around the fine block's edge equations.
 
     fb->tile_perfcounters[tile_id].smalltri_tile_raster = qpc() - tile_start_pc;
@@ -1883,8 +1878,8 @@ commonsetup_end:
         for (int32_t v = 0; v < 3; v++)
         {
             // the point of making them relative is to lower the required precision to 4 hex digits
-            assert((verts[v].x - last_tile_px_x) >= (-128 << 8) && (verts[v].x - last_tile_px_x) <= ((128 << 8) - 1));
-            assert((verts[v].y - last_tile_px_y) >= (-128 << 8) && (verts[v].y - last_tile_px_y) <= ((128 << 8) - 1));
+            assert((verts[v].x - last_tile_px_x) >= (-TILE_WIDTH_IN_PIXELS << 8) && (verts[v].x - last_tile_px_x) <= ((TILE_WIDTH_IN_PIXELS << 8) - 1));
+            assert((verts[v].y - last_tile_px_y) >= (-TILE_WIDTH_IN_PIXELS << 8) && (verts[v].y - last_tile_px_y) <= ((TILE_WIDTH_IN_PIXELS << 8) - 1));
 
             verts[v].x -= last_tile_px_x;
             verts[v].y -= last_tile_px_y;

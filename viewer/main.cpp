@@ -28,6 +28,10 @@
 #pragma comment(lib, "OpenGL32.lib")
 #pragma comment(lib, "glu32.lib")
 
+#define TILE_WIDTH_IN_PIXELS 64
+#define COARSE_BLOCK_WIDTH_IN_PIXELS 16
+#define FINE_BLOCK_WIDTH_IN_PIXELS 4
+
 int g_PendingMouseWarpUp;
 int g_PendingMouseWarpRight;
 bool g_Escaped = false;
@@ -295,7 +299,7 @@ layout(location = 2) uniform int show_fine;
 out vec4 FragColor;
 void main() {
     uvec2 pos = uvec2(gl_FragCoord.xy);
-    if (((pos.x & 0x7F) == 0 || (pos.y & 0x7F) == 0) && show_tiles != 0)
+    if (((pos.x & 0x3F) == 0 || (pos.y & 0x3F) == 0) && show_tiles != 0)
         FragColor = vec4(1,1,1,0.5);
     else if (((pos.x & 0xF) == 0 || (pos.y & 0xF) == 0) && show_coarse != 0)
          FragColor = vec4(1,0.7,0.7,0.5);
@@ -1043,11 +1047,11 @@ int main()
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glUseProgram(0);
-            for (int32_t tile_y = 0; tile_y < (fbheight + 127) / 128; tile_y++)
+            for (int32_t tile_y = 0; tile_y < (fbheight + TILE_WIDTH_IN_PIXELS - 1) / TILE_WIDTH_IN_PIXELS; tile_y++)
             {
-                for (int32_t tile_x = 0; tile_x < (fbwidth + 127) / 128; tile_x++)
+                for (int32_t tile_x = 0; tile_x < (fbwidth + TILE_WIDTH_IN_PIXELS - 1) / TILE_WIDTH_IN_PIXELS; tile_x++)
                 {
-                    int width_in_tiles = (fbwidth + 127) / 128;
+                    int width_in_tiles = (fbwidth + TILE_WIDTH_IN_PIXELS - 1) / TILE_WIDTH_IN_PIXELS;
                     int tile_i = tile_y * width_in_tiles + tile_x;
 
                     glMatrixMode(GL_PROJECTION);
@@ -1058,10 +1062,10 @@ int main()
 
                     glColor4d((double)tile_summedticks[tile_i] / perf_max * 0.5, 0.0, 0.0, 0.5);
                     glBegin(GL_QUADS);
-                    glVertex2d(tile_x * 128, tile_y * 128);
-                    glVertex2d(tile_x * 128, (tile_y + 1) * 128);
-                    glVertex2d((tile_x + 1) * 128, (tile_y + 1) * 128);
-                    glVertex2d((tile_x + 1) * 128, tile_y * 128);
+                    glVertex2d(tile_x * TILE_WIDTH_IN_PIXELS, tile_y * TILE_WIDTH_IN_PIXELS);
+                    glVertex2d(tile_x * TILE_WIDTH_IN_PIXELS, (tile_y + 1) * TILE_WIDTH_IN_PIXELS);
+                    glVertex2d((tile_x + 1) * TILE_WIDTH_IN_PIXELS, (tile_y + 1) * TILE_WIDTH_IN_PIXELS);
+                    glVertex2d((tile_x + 1) * TILE_WIDTH_IN_PIXELS, tile_y * TILE_WIDTH_IN_PIXELS);
                     glEnd();
                 }
             }
@@ -1103,14 +1107,14 @@ int main()
             {
                 ImGui::Text("CursorPos: (%d, %d)", cursor.x, cursor.y);
                 
-                int tile_y = cursor.y / 128;
-                int tile_x = cursor.x / 128;
-                int width_in_tiles = (fbwidth + 127) / 128;
+                int tile_y = cursor.y / TILE_WIDTH_IN_PIXELS;
+                int tile_x = cursor.x / TILE_WIDTH_IN_PIXELS;
+                int width_in_tiles = (fbwidth + TILE_WIDTH_IN_PIXELS - 1) / TILE_WIDTH_IN_PIXELS;
                 int tile_i = tile_y * width_in_tiles + tile_x;
                 ImGui::Text("TileID: %d", tile_i);
-                int tile_start = tile_i * 128 * 128;
-                int swizzled = pdep_u32(cursor.x, 0x55555555 & (128 * 128 - 1));
-                swizzled |= pdep_u32(cursor.y, 0xAAAAAAAA & (128 * 128 - 1));
+                int tile_start = tile_i * TILE_WIDTH_IN_PIXELS * TILE_WIDTH_IN_PIXELS;
+                int swizzled = pdep_u32(cursor.x, 0x55555555 & (TILE_WIDTH_IN_PIXELS * TILE_WIDTH_IN_PIXELS - 1));
+                swizzled |= pdep_u32(cursor.y, 0xAAAAAAAA & (TILE_WIDTH_IN_PIXELS * TILE_WIDTH_IN_PIXELS - 1));
                 ImGui::Text("Swizzled pixel: %d + %d = %d", tile_start, swizzled, tile_start + swizzled);
 
                 uint8_t r = rgba8_pixels[(cursor.y * fbwidth + cursor.x) * 4 + 0];
@@ -1243,9 +1247,9 @@ int main()
                         if (cursorpos.x >= 0 && cursorpos.x < fbwidth &&
                             cursorpos.y >= 0 && cursorpos.y < fbheight)
                         {
-                            int tile_y = cursorpos.y / 128;
-                            int tile_x = cursorpos.x / 128;
-                            int width_in_tiles = (fbwidth + 127) / 128;
+                            int tile_y = cursorpos.y / TILE_WIDTH_IN_PIXELS;
+                            int tile_x = cursorpos.x / TILE_WIDTH_IN_PIXELS;
+                            int width_in_tiles = (fbwidth + TILE_WIDTH_IN_PIXELS - 1) / TILE_WIDTH_IN_PIXELS;
                             int tile_i = tile_y * width_in_tiles + tile_x;
 
                             ImGui::Text("Tile %d perfcounters:", tile_i);
