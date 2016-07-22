@@ -316,7 +316,7 @@ int main()
     int fbwidth = 1280;
     int fbheight = 720;
 
-    SetProcessDPIAware();
+    // SetProcessDPIAware();
     init_window(fbwidth, fbheight);
 
     GLuint gridsp;
@@ -531,6 +531,7 @@ int main()
                         if (pressed_run_full_benchmark)
                         {
                             curr_model_index = 0;
+                            switched_model = true;
                         }
                     }
                 }

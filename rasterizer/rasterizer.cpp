@@ -390,8 +390,6 @@ typedef struct tilecmd_drawsmalltri_t
     int32_t vert_Zs[3];
     uint32_t max_Z, min_Z;
     uint32_t rcp_triarea2;
-    int32_t first_coarse_x, last_coarse_x;
-    int32_t first_coarse_y, last_coarse_y;
 } tilecmd_drawsmalltri_t;
 
 typedef struct tilecmd_drawtile_t
@@ -862,6 +860,14 @@ static void draw_coarse_block_smalltri_scalar(framebuffer_t* fb, int32_t coarse_
         edges[v] = drawcmd->edges[v];
     }
 
+    int32_t edge_trivRejs[3];
+    for (int32_t v = 0; v < 3; v++)
+    {
+        edge_trivRejs[v] = drawcmd->edges[v];
+        if (fine_edge_dxs[v] < 0) edge_trivRejs[v] += fine_edge_dxs[v];
+        if (fine_edge_dys[v] < 0) edge_trivRejs[v] += fine_edge_dys[v];
+    }
+
     const uint32_t mask_x = pdep_u32(-FINE_BLOCK_WIDTH_IN_PIXELS, COARSE_BLOCK_X_SWIZZLE_MASK);
     const uint32_t mask_y = pdep_u32(-FINE_BLOCK_WIDTH_IN_PIXELS, COARSE_BLOCK_Y_SWIZZLE_MASK);
 
@@ -876,30 +882,60 @@ static void draw_coarse_block_smalltri_scalar(framebuffer_t* fb, int32_t coarse_
             edges_row[v] = edges[v];
         }
 
+        int32_t edge_row_trivRejs[3];
+        for (int32_t v = 0; v < 3; v++)
+        {
+            edge_row_trivRejs[v] = edge_trivRejs[v];
+        }
+
         for (
             uint32_t fine_x = 0, fine_x_bits = 0;
             fine_x < COARSE_BLOCK_WIDTH_IN_FINE_BLOCKS;
             fine_x++, fine_x_bits = (fine_x_bits - mask_x) & mask_x)
         {
-            tilecmd_drawsmalltri_t fbargs = *drawcmd;
-
+            // trivial reject if at least one edge doesn't cover the coarse block at all
+            int32_t trivially_rejected = 0;
             for (int32_t v = 0; v < 3; v++)
             {
-                fbargs.edges[v] = edges_row[v];
+                if (edge_row_trivRejs[v] >= 0)
+                {
+                    trivially_rejected = 1;
+                    break;
+                }
             }
 
-            int32_t dst_i = coarse_dst_i + (fine_y_bits | fine_x_bits);
-            draw_fine_block_smalltri_scalar(fb, dst_i, &fbargs);
+            if (!trivially_rejected)
+            {
+                tilecmd_drawsmalltri_t fbargs = *drawcmd;
+
+                for (int32_t v = 0; v < 3; v++)
+                {
+                    fbargs.edges[v] = edges_row[v];
+                }
+
+                int32_t dst_i = coarse_dst_i + (fine_y_bits | fine_x_bits);
+                draw_fine_block_smalltri_scalar(fb, dst_i, &fbargs);
+            }
 
             for (int32_t v = 0; v < 3; v++)
             {
                 edges_row[v] += fine_edge_dxs[v];
+            }
+
+            for (int32_t v = 0; v < 3; v++)
+            {
+                edge_row_trivRejs[v] += fine_edge_dxs[v];
             }
         }
 
         for (int32_t v = 0; v < 3; v++)
         {
             edges[v] += fine_edge_dys[v];
+        }
+
+        for (int32_t v = 0; v < 3; v++)
+        {
+            edge_trivRejs[v] += fine_edge_dys[v];
         }
     }
 
@@ -921,22 +957,25 @@ static void draw_tile_smalltri_scalar(framebuffer_t* fb, int32_t tile_id, const 
     int32_t edges[3];
     for (int32_t v = 0; v < 3; v++)
     {
-        edges[v] = drawcmd->edges[v]
-            + drawcmd->first_coarse_y * coarse_edge_dys[v]
-            + drawcmd->first_coarse_x * coarse_edge_dxs[v];
+        edges[v] = drawcmd->edges[v];
+    }
+
+    int32_t edge_trivRejs[3];
+    for (int32_t v = 0; v < 3; v++)
+    {
+        edge_trivRejs[v] = drawcmd->edges[v];
+        if (coarse_edge_dxs[v] < 0) edge_trivRejs[v] += coarse_edge_dxs[v];
+        if (coarse_edge_dys[v] < 0) edge_trivRejs[v] += coarse_edge_dys[v];
     }
 
     const uint32_t mask_x = pdep_u32(-COARSE_BLOCK_WIDTH_IN_PIXELS, TILE_X_SWIZZLE_MASK);
     const uint32_t mask_y = pdep_u32(-COARSE_BLOCK_WIDTH_IN_PIXELS, TILE_Y_SWIZZLE_MASK);
 
-    uint32_t y0_bits = pdep_u32(drawcmd->first_coarse_y * COARSE_BLOCK_WIDTH_IN_PIXELS, TILE_Y_SWIZZLE_MASK);
-    uint32_t x0_bits = pdep_u32(drawcmd->first_coarse_x * COARSE_BLOCK_WIDTH_IN_PIXELS, TILE_X_SWIZZLE_MASK);
-
     uint32_t tile_dst_i = tile_id * PIXELS_PER_TILE;
 
     for (
-        uint32_t cb_y = drawcmd->first_coarse_y, cb_y_bits = y0_bits;
-        cb_y <= (uint32_t)drawcmd->last_coarse_y;
+        uint32_t cb_y = 0, cb_y_bits = 0;
+        cb_y < TILE_WIDTH_IN_COARSE_BLOCKS;
         cb_y++, cb_y_bits = (cb_y_bits - mask_y) & mask_y)
     {
         int32_t edges_row[3];
@@ -945,33 +984,63 @@ static void draw_tile_smalltri_scalar(framebuffer_t* fb, int32_t tile_id, const 
             edges_row[v] = edges[v];
         }
 
+        int32_t edge_row_trivRejs[3];
+        for (int32_t v = 0; v < 3; v++)
+        {
+            edge_row_trivRejs[v] = edge_trivRejs[v];
+        }
+
         for (
-            uint32_t cb_x = drawcmd->first_coarse_x, cb_x_bits = x0_bits;
-            cb_x <= (uint32_t)drawcmd->last_coarse_x;
+            uint32_t cb_x = 0, cb_x_bits = 0;
+            cb_x < TILE_WIDTH_IN_COARSE_BLOCKS;
             cb_x++, cb_x_bits = (cb_x_bits - mask_x) & mask_x)
         {
-            tilecmd_drawsmalltri_t cbargs = *drawcmd;
-            
+            // trivial reject if at least one edge doesn't cover the coarse block at all
+            int32_t trivially_rejected = 0;
             for (int32_t v = 0; v < 3; v++)
             {
-                cbargs.edges[v] = edges_row[v];
+                if (edge_row_trivRejs[v] >= 0)
+                {
+                    trivially_rejected = 1;
+                    break;
+                }
             }
 
-            uint32_t dst_i = tile_dst_i + (cb_y_bits | cb_x_bits);
-            
-            fb->tile_perfcounters[tile_id].smalltri_tile_raster += qpc() - tile_start_pc;
-            draw_coarse_block_smalltri_scalar(fb, dst_i, &cbargs);
-            tile_start_pc = qpc();
+            if (!trivially_rejected)
+            {
+                tilecmd_drawsmalltri_t cbargs = *drawcmd;
+
+                for (int32_t v = 0; v < 3; v++)
+                {
+                    cbargs.edges[v] = edges_row[v];
+                }
+
+                uint32_t dst_i = tile_dst_i + (cb_y_bits | cb_x_bits);
+
+                fb->tile_perfcounters[tile_id].smalltri_tile_raster += qpc() - tile_start_pc;
+                draw_coarse_block_smalltri_scalar(fb, dst_i, &cbargs);
+                tile_start_pc = qpc();
+            }
 
             for (int32_t v = 0; v < 3; v++)
             {
                 edges_row[v] += coarse_edge_dxs[v];
+            }
+
+            for (int32_t v = 0; v < 3; v++)
+            {
+                edge_row_trivRejs[v] += coarse_edge_dxs[v];
             }
         }
 
         for (int32_t v = 0; v < 3; v++)
         {
             edges[v] += coarse_edge_dys[v];
+        }
+
+        for (int32_t v = 0; v < 3; v++)
+        {
+            edge_trivRejs[v] += coarse_edge_dys[v];
         }
     }
 
@@ -1987,30 +2056,6 @@ commonsetup_end:
                     edge_dys[v] * (first_tile_y - last_tile_y)) * TILE_WIDTH_IN_PIXELS;
             }
 
-            drawsmalltricmd.first_coarse_x = first_rel_cb_x;
-            if (drawsmalltricmd.first_coarse_x < 0)
-            {
-                drawsmalltricmd.first_coarse_x = 0;
-            }
-
-            drawsmalltricmd.last_coarse_x = last_rel_cb_x;
-            if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS)
-            {
-                drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
-            }
-
-            drawsmalltricmd.first_coarse_y = first_rel_cb_y;
-            if (drawsmalltricmd.first_coarse_y < 0)
-            {
-                drawsmalltricmd.first_coarse_y = 0;
-            }
-
-            drawsmalltricmd.last_coarse_y = last_rel_cb_y;
-            if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS)
-            {
-                drawsmalltricmd.last_coarse_y = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
-            }
-
             fb->perfcounters.smalltri_setup += qpc() - setup_start_pc;
             framebuffer_push_tilecmd(fb, first_tile_id, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
             setup_start_pc = qpc();
@@ -2023,26 +2068,6 @@ commonsetup_end:
             for (int32_t v = 0; v < 3; v++)
             {
                 drawsmalltricmd.edges[v] = edges[v] + edge_dys[v] * (first_tile_y - last_tile_y) * TILE_WIDTH_IN_PIXELS;
-            }
-
-            drawsmalltricmd.first_coarse_x = 0;
-
-            drawsmalltricmd.last_coarse_x = last_rel_cb_x - TILE_WIDTH_IN_COARSE_BLOCKS;
-            if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS)
-            {
-                drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
-            }
-
-            drawsmalltricmd.first_coarse_y = first_rel_cb_y;
-            if (drawsmalltricmd.first_coarse_y < 0)
-            {
-                drawsmalltricmd.first_coarse_y = 0;
-            }
-
-            drawsmalltricmd.last_coarse_y = last_rel_cb_y;
-            if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS)
-            {
-                drawsmalltricmd.last_coarse_y = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
             }
 
             int32_t tile_id_right = first_tile_id + 1;
@@ -2060,26 +2085,6 @@ commonsetup_end:
                 drawsmalltricmd.edges[v] = edges[v] + edge_dxs[v] * (first_tile_x - last_tile_x) * TILE_WIDTH_IN_PIXELS;
             }
 
-            drawsmalltricmd.first_coarse_x = first_rel_cb_x;
-            if (drawsmalltricmd.first_coarse_x < 0)
-            {
-                drawsmalltricmd.first_coarse_x = 0;
-            }
-
-            drawsmalltricmd.last_coarse_x = last_rel_cb_x;
-            if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS)
-            {
-                drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
-            }
-
-            drawsmalltricmd.first_coarse_y = 0;
-
-            drawsmalltricmd.last_coarse_y = last_rel_cb_y - TILE_WIDTH_IN_COARSE_BLOCKS;
-            if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS)
-            {
-                drawsmalltricmd.last_coarse_y = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
-            }
-
             int32_t tile_id_down = first_tile_id + fb->width_in_tiles;
             fb->perfcounters.smalltri_setup += qpc() - setup_start_pc;
             framebuffer_push_tilecmd(fb, tile_id_down, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
@@ -2093,22 +2098,6 @@ commonsetup_end:
             for (int32_t v = 0; v < 3; v++)
             {
                 drawsmalltricmd.edges[v] = edges[v];
-            }
-
-            drawsmalltricmd.first_coarse_x = 0;
-
-            drawsmalltricmd.last_coarse_x = last_rel_cb_x - TILE_WIDTH_IN_COARSE_BLOCKS;
-            if (drawsmalltricmd.last_coarse_x >= TILE_WIDTH_IN_COARSE_BLOCKS)
-            {
-                drawsmalltricmd.last_coarse_x = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
-            }
-
-            drawsmalltricmd.first_coarse_y = 0;
-
-            drawsmalltricmd.last_coarse_y = last_rel_cb_y - TILE_WIDTH_IN_COARSE_BLOCKS;
-            if (drawsmalltricmd.last_coarse_y >= TILE_WIDTH_IN_COARSE_BLOCKS)
-            {
-                drawsmalltricmd.last_coarse_y = TILE_WIDTH_IN_COARSE_BLOCKS - 1;
             }
 
             int32_t tile_id_downright = first_tile_id + 1 + fb->width_in_tiles;
