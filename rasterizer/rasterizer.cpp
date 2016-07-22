@@ -778,12 +778,13 @@ static void draw_fine_block_smalltri_scalar(framebuffer_t* fb, int32_t fine_dst_
 
             if (!pixel_discarded)
             {
-                int32_t rcp_triarea2_mantissa = (drawcmd->rcp_triarea2 & 0xFFFF);
-                int32_t rcp_triarea2_exponent = (drawcmd->rcp_triarea2 & 0xFF0000) >> 16;
+                uint32_t rcp_triarea2_mantissa = (drawcmd->rcp_triarea2 & 0xFFFF);
+                uint32_t rcp_triarea2_exponent = (drawcmd->rcp_triarea2 & 0xFF0000) >> 16;
                 int32_t rcp_triarea2_rshift = rcp_triarea2_exponent - 127;
 
-                int32_t shifted_e2 = -edges_row[2];
-                int32_t shifted_e0 = -edges_row[0];
+                // note: off by one because -1 maps to 0
+                uint32_t shifted_e2 = -edges_row[2] - 1;
+                uint32_t shifted_e0 = -edges_row[0] - 1;
                 if (rcp_triarea2_rshift < 0)
                 {
                     shifted_e2 = shifted_e2 << -rcp_triarea2_rshift;
@@ -800,8 +801,8 @@ static void draw_fine_block_smalltri_scalar(framebuffer_t* fb, int32_t fine_dst_
                 assert((rcp_triarea2_mantissa & 0xFFFF) == rcp_triarea2_mantissa);
 
                 // compute non-perspective-correct barycentrics for vertices 1 and 2
-                int32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 16;
-                int32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 16;
+                uint32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 16;
+                uint32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 16;
 
                 if (u + v > 0x7FFF)
                     v = 0x7FFF - u;
@@ -810,7 +811,7 @@ static void draw_fine_block_smalltri_scalar(framebuffer_t* fb, int32_t fine_dst_
                 assert(v >= 0 && v <= 0x7FFF);
 
                 // not related to vertex w. Just third barycentric. Bad naming.
-                int32_t w = 0x7FFF - u - v;
+                uint32_t w = 0x7FFF - u - v;
                 assert(w >= 0 && w <= 0x7FFF);
 
                 assert(u + v + w == 0x7FFF);
@@ -1025,8 +1026,9 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
                 int32_t rcp_triarea2_exponent = (drawcmd->rcp_triarea2 & 0xFF0000) >> 16;
                 int32_t rcp_triarea2_rshift = rcp_triarea2_exponent - 127;
 
-                int32_t shifted_e2 = (int32_t)-edges_row[2];
-                int32_t shifted_e0 = (int32_t)-edges_row[0];
+                // note: off by one because -1 maps to 0
+                int32_t shifted_e2 = (int32_t)-edges_row[2] - 1;
+                int32_t shifted_e0 = (int32_t)-edges_row[0] - 1;
                 if (rcp_triarea2_rshift < 0)
                 {
                     shifted_e2 = shifted_e2 << -rcp_triarea2_rshift;
@@ -1046,8 +1048,8 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
                 assert((rcp_triarea2_mantissa & 0xFFFF) == rcp_triarea2_mantissa);
 
                  // compute non-perspective-correct barycentrics for vertices 1 and 2
-                 int32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 16;
-                 int32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 16;
+                 uint32_t u = ((uint32_t)shifted_e2 * rcp_triarea2_mantissa) >> 16;
+                 uint32_t v = ((uint32_t)shifted_e0 * rcp_triarea2_mantissa) >> 16;
 
                  if (u + v > 0x7FFF)
                      v = 0x7FFF - u;
@@ -1449,6 +1451,9 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
     }
 
     fb->tile_perfcounters[tile_id].cmdbuf_pushcmd += qpc() - pushcmd_start_pc;
+
+    // DEBUGGING: Always flush
+    // framebuffer_resolve_tile(fb, tile_id);
 }
 
 void framebuffer_resolve(framebuffer_t* fb)
@@ -1921,12 +1926,12 @@ commonsetup_end:
             rcp_triarea2_mantissa = rcp_triarea2_mantissa << -rcp_triarea2_mantissa_rshift;
         else
             rcp_triarea2_mantissa = rcp_triarea2_mantissa >> rcp_triarea2_mantissa_rshift;
-        assert(!(rcp_triarea2_mantissa & 0x10000));
+        assert(!(rcp_triarea2_mantissa & 0xFFFF0000));
         assert(rcp_triarea2_mantissa & 0x8000);
 
         assert(rcp_triarea2_mantissa < 0x10000);
         rcp_triarea2_mantissa = rcp_triarea2_mantissa & 0xFFFF;
-        uint32_t rcp_triarea2_exponent = 127 + triarea2_mantissa_rshift - rcp_triarea2_mantissa_rshift + 1;
+        uint32_t rcp_triarea2_exponent = 127 + (triarea2_mantissa_rshift + 1) - rcp_triarea2_mantissa_rshift;
         uint32_t rcp_triarea2 = (rcp_triarea2_exponent << 16) | rcp_triarea2_mantissa;
 
         drawsmalltricmd.rcp_triarea2 = rcp_triarea2;
