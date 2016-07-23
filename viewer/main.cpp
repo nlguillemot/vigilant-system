@@ -65,6 +65,11 @@ LRESULT CALLBACK MyWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
     return DefWindowProc(hWnd, message, wParam, lParam);
 }
 
+void APIENTRY DebugCallbackGL(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *message, const void *userParam)
+{
+    printf("DebugCallbackGL: %s\n", message);
+}
+
 HWND g_hWnd;
 
 void init_window(int32_t width, int32_t height)
@@ -152,9 +157,9 @@ void init_window(int32_t width, int32_t height)
         WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
         WGL_CONTEXT_MINOR_VERSION_ARB, 3,
 #ifdef _DEBUG
-        WGL_CONTEXT_FLAGS_ARB, GL_CONTEXT_FLAG_DEBUG_BIT,
+        // HD 540 gives a black screen in debug mode. nice!
+        // WGL_CONTEXT_FLAGS_ARB, GL_CONTEXT_FLAG_DEBUG_BIT,
 #endif
-        // note: assuming WGL_ARB_create_context_profile is available. Should instead check for it.
         WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB,
         0
     };
@@ -163,6 +168,13 @@ void init_window(int32_t width, int32_t height)
     wglMakeCurrent(hDC, hGLRC);
     
     LoadGLProcs();
+
+#ifdef _DEBUG
+    // Enable OpenGL debugging
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    glEnable(GL_DEBUG_OUTPUT);
+    glDebugMessageCallback(DebugCallbackGL, 0);
+#endif
 
     ShowWindow(g_hWnd, SW_SHOWNORMAL);
 

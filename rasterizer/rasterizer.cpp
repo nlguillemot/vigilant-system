@@ -28,7 +28,7 @@
 // ------------------
 // Which instruction set to use
 // Haswell New Instructions (AVX2)
-// #define USE_HSWNI
+// #define USE_HSWni
 // ------------------
 
 // Sized according to the Larrabee rasterizer's description
@@ -69,7 +69,7 @@
 #define TILE_COMMAND_BUFFER_SIZE_IN_DWORDS 128
 
 // parallel bit deposit low-order source bits according to mask bits
-#ifdef USE_HSWNI
+#ifdef USE_HSWni
 __forceinline uint32_t pdep_u32(uint32_t source, uint32_t mask)
 {
     // AVX2 implementation
@@ -96,7 +96,7 @@ __forceinline uint32_t pdep_u32(uint32_t source, uint32_t mask)
 #endif
 
 // parallel bit extract low-order source bits according to mask bits
-#ifdef USE_HSWNI
+#ifdef USE_HSWni
 __forceinline uint32_t pext_u32(uint32_t source, uint32_t mask)
 {
     // AVX2 implementation
@@ -123,7 +123,7 @@ __forceinline uint32_t pext_u32(uint32_t source, uint32_t mask)
 #endif
 
 // count leading zeros (32 bits)
-#ifdef USE_HSWNI
+#ifdef USE_HSWni
 __forceinline uint32_t lzcnt(uint32_t value)
 {
     // AVX2 implementation
@@ -160,7 +160,7 @@ __forceinline uint32_t lzcnt(uint32_t value)
 #endif
 
 // count leading zeros (64 bits)
-#ifdef USE_HSWNI
+#ifdef USE_HSWni
 __forceinline uint64_t lzcnt64(uint64_t value)
 {
     return __lzcnt64(value);
@@ -1367,7 +1367,7 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
         {
             fb->tile_perfcounters[tile_id].cmdbuf_resolve += qpc() - resolve_start_pc;
 
-#ifdef USE_HSWNI
+#ifdef USE_HSWni
             draw_tile_smalltri_avx2(fb, tile_id, (tilecmd_drawsmalltri_t*)cmd);
 #else
             draw_tile_smalltri_scalar(fb, tile_id, (tilecmd_drawsmalltri_t*)cmd);
@@ -1959,7 +1959,14 @@ commonsetup_end:
             verts[v].y -= last_tile_px_y;
         }
 
-        int32_t triarea2 = ((verts[1].x - verts[0].x) * (verts[2].y - verts[0].y) - (verts[1].y - verts[0].y) * (verts[2].x - verts[0].x)) >> 8;
+        int32_t triarea2 = (verts[1].x - verts[0].x) * (verts[2].y - verts[0].y) - (verts[1].y - verts[0].y) * (verts[2].x - verts[0].x);
+        if (triarea2 < 0 && triarea2 > -256)
+        {
+            // force to zero, since right shift of negative numbers never reach zero
+            triarea2 = 0;
+        }
+
+        triarea2 = triarea2 >> 8;
         
         if (triarea2 == 0)
         {
@@ -2027,12 +2034,15 @@ commonsetup_end:
             // note: evaluated at px = (0.5,0.5) because the vertices are relative to the last tile
             const int32_t s168_zero_pt_five = 0x80;
             edges[v] = ((s168_zero_pt_five - verts[v].x) * edge_dxs[v]) - ((s168_zero_pt_five - verts[v].y) * -edge_dys[v]);
-            
+
+            // round to negative infinity
+            if (edges[v] < 0)
+                edges[v] = edges[v] - 0xFF;
+
+            edges[v] = edges[v] >> 8;
+
             // Top-left rule: shift top-left edges ever so slightly outward to make the top-left edges be the tie-breakers when rasterizing adjacent triangles
             if ((verts[v].y == verts[v1].y && verts[v].x < verts[v1].x) || verts[v].y > verts[v1].y) edges[v]--;
-
-            // truncate (don't worry, this works out because the top-left rule works as a rounding mode)
-            edges[v] = edges[v] >> 8;
         }
 
         drawsmalltricmd.min_Z = min_Z;
@@ -2123,7 +2133,14 @@ commonsetup_end:
         // this results in some extra overhead, but it's not a big deal when you consider that this happens only for large triangles.
         // The tens of thousands of pixels that large triangles generate outweigh the cost of slightly more expensive setup.
 
-        int64_t triarea2 = (((int64_t)verts[1].x - verts[0].x) * ((int64_t)verts[2].y - verts[0].y) - ((int64_t)verts[1].y - verts[0].y) * ((int64_t)verts[2].x - verts[0].x)) >> 8;
+        int64_t triarea2 = ((int64_t)verts[1].x - verts[0].x) * ((int64_t)verts[2].y - verts[0].y) - ((int64_t)verts[1].y - verts[0].y) * ((int64_t)verts[2].x - verts[0].x);
+        if (triarea2 < 0 && triarea2 > -256)
+        {
+            // force to zero, since right shift of negative numbers never reach zero
+            triarea2 = 0;
+        }
+
+        triarea2 = triarea2 >> 8;
         
         if (triarea2 == 0)
         {
@@ -2188,11 +2205,14 @@ commonsetup_end:
             const int32_t s168_zero_pt_five = 0x80;
             edges[v] = ((int64_t)first_tile_px_x + s168_zero_pt_five - verts[v].x) * edge_dxs[v] - ((int64_t)first_tile_px_y + s168_zero_pt_five - verts[v].y) * -edge_dys[v];
 
+            // round to negative infinity
+            if (edges[v] < 0)
+                edges[v] = edges[v] - 0xFF;
+
+            edges[v] = edges[v] >> 8;
+
             // Top-left rule: shift top-left edges ever so slightly outward to make the top-left edges be the tie-breakers when rasterizing adjacent triangles
             if ((verts[v].y == verts[v1].y && verts[v].x < verts[v1].x) || verts[v].y > verts[v1].y) edges[v]--;
-
-            // truncate (don't worry, this works out because the top-left rule works as a rounding mode)
-            edges[v] = edges[v] >> 8;
         }
 
         int64_t tile_edge_dxs[3];
