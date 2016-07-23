@@ -28,7 +28,7 @@
 // ------------------
 // Which instruction set to use
 // Haswell New Instructions (AVX2)
-// #define USE_HSWni
+#define USE_HSWni
 // ------------------
 
 // Sized according to the Larrabee rasterizer's description
@@ -581,8 +581,8 @@ static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i,
             goto end_fineblock_half;
 
         // shift edge equations to be on the same scale as the triangle area
-        __m256i shifted_e2 = _mm256_sub_epi32(_mm256_setzero_si256(), edges[2]);
-        __m256i shifted_e0 = _mm256_sub_epi32(_mm256_setzero_si256(), edges[0]);
+        __m256i shifted_e2 = _mm256_sub_epi32(_mm256_sub_epi32(_mm256_setzero_si256(), edges[2]), _mm256_set1_epi32(1));
+        __m256i shifted_e0 = _mm256_sub_epi32(_mm256_sub_epi32(_mm256_setzero_si256(), edges[0]), _mm256_set1_epi32(1));
         if (rcp_triarea2_rshift < 0)
         {
             shifted_e2 = _mm256_slli_epi32(shifted_e2, -rcp_triarea2_rshift);
@@ -726,6 +726,62 @@ static void draw_tile_smalltri_avx2(framebuffer_t* fb, int32_t tile_id, const ti
     //  8  9 12 13
     // 10 11 14 15
     // therefore, tiles are rasterized by shifting around the fine block's edge equations.
+
+    __m256i coarse_edge_dxs[3], coarse_edge_dys[3], coarse_edge_2dys[3];
+    coarse_edge_dxs[0] = _mm256_set1_epi32(drawcmd->edge_dxs[0] * COARSE_BLOCK_WIDTH_IN_PIXELS);
+    coarse_edge_dxs[1] = _mm256_set1_epi32(drawcmd->edge_dxs[1] * COARSE_BLOCK_WIDTH_IN_PIXELS);
+    coarse_edge_dxs[2] = _mm256_set1_epi32(drawcmd->edge_dxs[2] * COARSE_BLOCK_WIDTH_IN_PIXELS);
+    coarse_edge_dys[0] = _mm256_set1_epi32(drawcmd->edge_dys[0] * COARSE_BLOCK_WIDTH_IN_PIXELS);
+    coarse_edge_dys[1] = _mm256_set1_epi32(drawcmd->edge_dys[1] * COARSE_BLOCK_WIDTH_IN_PIXELS);
+    coarse_edge_dys[2] = _mm256_set1_epi32(drawcmd->edge_dys[2] * COARSE_BLOCK_WIDTH_IN_PIXELS);
+    coarse_edge_2dys[0] = _mm256_set1_epi32(drawcmd->edge_dys[0] * COARSE_BLOCK_WIDTH_IN_PIXELS * 2);
+    coarse_edge_2dys[1] = _mm256_set1_epi32(drawcmd->edge_dys[1] * COARSE_BLOCK_WIDTH_IN_PIXELS * 2);
+    coarse_edge_2dys[2] = _mm256_set1_epi32(drawcmd->edge_dys[2] * COARSE_BLOCK_WIDTH_IN_PIXELS * 2);
+
+    const __m256i edge_y_offset_mask = _mm256_set_epi32(-1, -1, 0, 0, -1, -1, 0, 0);
+    const __m256i edge_y_offset_multiplier = _mm256_set_epi32(3, 2, 3, 2, 1, 0, 1, 0);
+
+    __m256i edges[3];
+    edges[0] = _mm256_set1_epi32(drawcmd->edges[0]);
+    edges[1] = _mm256_set1_epi32(drawcmd->edges[1]);
+    edges[2] = _mm256_set1_epi32(drawcmd->edges[2]);
+
+    // initial y offset
+    edges[0] = _mm256_add_epi32(edges[0], _mm256_and_si256(coarse_edge_dys[0], edge_y_offset_mask));
+    edges[1] = _mm256_add_epi32(edges[1], _mm256_and_si256(coarse_edge_dys[1], edge_y_offset_mask));
+    edges[2] = _mm256_add_epi32(edges[2], _mm256_and_si256(coarse_edge_dys[2], edge_y_offset_mask));
+
+    // initial x offset
+    edges[0] = _mm256_add_epi32(edges[0], _mm256_mul_epi32(coarse_edge_dxs[0], _mm256_set_epi32(3, 2, 3, 2, 1, 0, 1, 0)));
+    edges[1] = _mm256_add_epi32(edges[1], _mm256_mul_epi32(coarse_edge_dxs[1], _mm256_set_epi32(3, 2, 3, 2, 1, 0, 1, 0)));
+    edges[2] = _mm256_add_epi32(edges[2], _mm256_mul_epi32(coarse_edge_dxs[2], _mm256_set_epi32(3, 2, 3, 2, 1, 0, 1, 0)));
+
+    int32_t dst_i = tile_id * PIXELS_PER_TILE;
+
+    for (int32_t tile_half = 0; tile_half < 2; tile_half++)
+    {
+        // draw each coarse block in the tile half
+        int32_t coarseblock_edges[3][8];
+        _mm256_store_si256((__m256i*)&coarseblock_edges[0][0], edges[0]);
+        _mm256_store_si256((__m256i*)&coarseblock_edges[1][0], edges[1]);
+        _mm256_store_si256((__m256i*)&coarseblock_edges[2][0], edges[2]);
+
+        tilecmd_drawsmalltri_t coarsecmd = *drawcmd;
+        for (int32_t i = 0; i < 8; i++)
+        {
+            coarsecmd.edges[0] = coarseblock_edges[0][i];
+            coarsecmd.edges[1] = coarseblock_edges[1][i];
+            coarsecmd.edges[2] = coarseblock_edges[2][i];
+
+            draw_coarse_block_smalltri_avx2(fb, dst_i, &coarsecmd);
+
+            dst_i += PIXELS_PER_COARSE_BLOCK;
+        }
+
+        edges[0] = _mm256_add_epi32(edges[0], coarse_edge_2dys[0]);
+        edges[1] = _mm256_add_epi32(edges[1], coarse_edge_2dys[1]);
+        edges[2] = _mm256_add_epi32(edges[2], coarse_edge_2dys[2]);
+    }
 
     fb->tile_perfcounters[tile_id].smalltri_tile_raster = qpc() - tile_start_pc;
 }
