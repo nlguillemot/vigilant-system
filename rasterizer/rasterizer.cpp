@@ -28,7 +28,7 @@
 // ------------------
 // Which instruction set to use
 // Haswell New Instructions (AVX2)
-#define USE_HSWni
+// #define USE_HSWni
 // ------------------
 
 // Sized according to the Larrabee rasterizer's description
@@ -1238,8 +1238,8 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
         edges[v] = drawcmd->edges[v];
     }
 
-    int32_t edge_trivRejs[3];
-    for (int32_t v = 0; v < 3; v++)
+    int32_t edge_trivRejs[kNumTestEdges > 0 ? kNumTestEdges : 1];
+    for (int32_t v = 0; v < kNumTestEdges; v++)
     {
         edge_trivRejs[v] = drawcmd->edges[v];
         if (fine_edge_dxs[v] < 0) edge_trivRejs[v] += fine_edge_dxs[v];
@@ -1259,8 +1259,8 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
             edges_row[v] = edges[v];
         }
 
-        int32_t edge_row_trivRejs[3];
-        for (int32_t v = 0; v < 3; v++)
+        int32_t edge_row_trivRejs[kNumTestEdges > 0 ? kNumTestEdges : 1];
+        for (int32_t v = 0; v < kNumTestEdges; v++)
         {
             edge_row_trivRejs[v] = edge_trivRejs[v];
         }
@@ -1272,7 +1272,7 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
         {
             // trivial reject if at least one edge doesn't cover the coarse block at all
             int32_t trivially_rejected = 0;
-            for (int32_t v = 0; v < 3; v++)
+            for (int32_t v = 0; v < kNumTestEdges; v++)
             {
                 if (edge_row_trivRejs[v] >= 0)
                 {
@@ -1299,7 +1299,7 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
                 edges_row[v] += fine_edge_dxs[v];
             }
 
-            for (int32_t v = 0; v < 3; v++)
+            for (int32_t v = 0; v < kNumTestEdges; v++)
             {
                 edge_row_trivRejs[v] += fine_edge_dxs[v];
             }
@@ -1310,7 +1310,7 @@ static void draw_coarse_block_largetri(framebuffer_t* fb, int32_t tile_id, int32
             edges[v] += fine_edge_dys[v];
         }
 
-        for (int32_t v = 0; v < 3; v++)
+        for (int32_t v = 0; v < kNumTestEdges; v++)
         {
             edge_trivRejs[v] += fine_edge_dys[v];
         }
@@ -1433,18 +1433,18 @@ static void draw_tile_largetri(framebuffer_t* fb, int32_t tile_id, const tilecmd
 
                 fb->tile_perfcounters[tile_id].largetri_tile_raster += qpc() - tile_start_pc;
                 
-                switch (num_tests_necessary)
+                switch (drawtilecmd.tilecmd_id)
                 {
-                case 0:
+                case tilecmd_id_drawtile_0edge:
                     draw_coarse_block_largetri<0>(fb, tile_id, dst_i, &drawtilecmd);
                     break;
-                case 1:
+                case tilecmd_id_drawtile_1edge:
                     draw_coarse_block_largetri<1>(fb, tile_id, dst_i, &drawtilecmd);
                     break;
-                case 2:
+                case tilecmd_id_drawtile_2edge:
                     draw_coarse_block_largetri<2>(fb, tile_id, dst_i, &drawtilecmd);
                     break;
-                case 3:
+                case tilecmd_id_drawtile_3edge:
                     draw_coarse_block_largetri<3>(fb, tile_id, dst_i, &drawtilecmd);
                     break;
                 }
@@ -1714,7 +1714,7 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
 
     fb->tile_perfcounters[tile_id].cmdbuf_pushcmd += qpc() - pushcmd_start_pc;
 
-    // DEBUGGING: Always flush
+    // DEBUGGING: Always flush. Helpful since it gives you a straight call stack through the command list.
     // framebuffer_resolve_tile(fb, tile_id);
 }
 
@@ -2153,6 +2153,13 @@ commonsetup_end:
         }
 
         int32_t triarea2 = (verts[1].x - verts[0].x) * (verts[2].y - verts[0].y) - (verts[1].y - verts[0].y) * (verts[2].x - verts[0].x);
+
+        // round away from zero to guarantee edge equations don't become greater than area
+        if (triarea2 < 0)
+            triarea2 -= 0xFF;
+        else if (triarea2 > 0)
+            triarea2 += 0xFF;
+
         if (triarea2 < 0 && triarea2 > -256)
         {
             // force to zero, since right shift of negative numbers never reach zero
@@ -2327,6 +2334,13 @@ commonsetup_end:
         // The tens of thousands of pixels that large triangles generate outweigh the cost of slightly more expensive setup.
 
         int64_t triarea2 = ((int64_t)verts[1].x - verts[0].x) * ((int64_t)verts[2].y - verts[0].y) - ((int64_t)verts[1].y - verts[0].y) * ((int64_t)verts[2].x - verts[0].x);
+
+        // round away from zero to guarantee edge equations don't become greater than area
+        if (triarea2 < 0)
+            triarea2 -= 0xFF;
+        else if (triarea2 > 0)
+            triarea2 += 0xFF;
+
         if (triarea2 < 0 && triarea2 > -256)
         {
             // force to zero, since right shift of negative numbers never reach zero
