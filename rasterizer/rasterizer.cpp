@@ -860,7 +860,7 @@ static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i,
     __m256i rcp_triarea2_mantissa256 = _mm256_set1_epi32(rcp_triarea2_mantissa);
 
     // pre-compute depth related stuff
-    __m256i d0 = _mm256_set1_epi16(drawcmd->vert_Zs[0] << 15);
+    __m256i d0 = _mm256_set1_epi32(drawcmd->vert_Zs[0] << 15);
     __m256i dd1 = _mm256_set1_epi32(drawcmd->vert_Zs[1] - drawcmd->vert_Zs[0]);
     __m256i dd2 = _mm256_set1_epi32(drawcmd->vert_Zs[2] - drawcmd->vert_Zs[0]);
 
@@ -893,8 +893,8 @@ static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i,
         }
 
         // compute non-perspective-correct barycentrics for vertices 1 and 2
-        __m256i u = _mm256_mulhrs_epi16(shifted_e2, rcp_triarea2_mantissa256);
-        __m256i v = _mm256_mulhrs_epi16(shifted_e0, rcp_triarea2_mantissa256);
+        __m256i u = _mm256_srli_epi32(_mm256_mullo_epi32(shifted_e2, rcp_triarea2_mantissa256), 16);
+        __m256i v = _mm256_srli_epi32(_mm256_mullo_epi32(shifted_e0, rcp_triarea2_mantissa256), 16);
 
         // ensure barycentrics sum to 1
         __m256i one_minus_u = _mm256_sub_epi32(_mm256_set1_epi32(0x7FFF), u);
@@ -905,28 +905,30 @@ static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i,
 
         // compute interpolated depth
         __m256i src_depth = d0;
-        src_depth = _mm256_add_epi32(src_depth, _mm256_mulhrs_epi16(u, dd1));
-        src_depth = _mm256_add_epi32(src_depth, _mm256_mulhrs_epi16(v, dd2));
+        src_depth = _mm256_add_epi32(src_depth, _mm256_mullo_epi32(u, dd1));
+        src_depth = _mm256_add_epi32(src_depth, _mm256_mullo_epi32(v, dd2));
 
         __m256i dst_depth = _mm256_load_si256((__m256i*)&fb->depthbuffer[fine_dst_i]);
-        __m256i depth_pass = _mm256_cmpeq_epi32(_mm256_cmpgt_epi32(dst_depth, src_depth), _mm256_setzero_si256());
+        
+        // note: unsigned compare implemented using signed compare, done by subtracting 2^31
+        __m256i depth_pass = _mm256_cmpgt_epi32(_mm256_sub_epi32(dst_depth, _mm256_set1_epi32(0x80000000)), _mm256_sub_epi32(src_depth, _mm256_set1_epi32(0x80000000)));
 
         // combine coverage and depth masks
         depth_pass = _mm256_and_si256(coverage_pass, depth_pass);
 
         // early out if all depth tests fail
         int depth_pass_mask = _mm256_movemask_epi8(depth_pass);
-        // if (!depth_pass_mask)
-        //     goto end_fineblock_half;
-
+        if (!depth_pass_mask)
+            goto end_fineblock_half;
+        
         // blend depth into depthbuffer
         _mm256_maskstore_epi32((int32_t*)&fb->depthbuffer[fine_dst_i], depth_pass, src_depth);
 
         // set color based on barycentrics.
-        __m256i src_color = _mm256_set1_epi32(0xFFFFFFFF);
-        // src_color = _mm256_or_si256(src_color, _mm256_slli_epi32(_mm256_srli_epi32(_mm256_mul_epi32(w, _mm256_set1_epi32(0xFF)), 15), 16));
-        // src_color = _mm256_or_si256(src_color, _mm256_slli_epi32(_mm256_srli_epi32(_mm256_mul_epi32(u, _mm256_set1_epi32(0xFF)), 15), 16));
-        // src_color = _mm256_or_si256(src_color, _mm256_slli_epi32(_mm256_srli_epi32(_mm256_mul_epi32(v, _mm256_set1_epi32(0xFF)), 15), 16));
+        __m256i src_color = _mm256_set1_epi32(0xFF << 24);
+        src_color = _mm256_or_si256(src_color, _mm256_slli_epi32(_mm256_srli_epi32(_mm256_mullo_epi32(w, _mm256_set1_epi32(0xFF)), 15), 16));
+        src_color = _mm256_or_si256(src_color, _mm256_slli_epi32(_mm256_srli_epi32(_mm256_mullo_epi32(u, _mm256_set1_epi32(0xFF)), 15), 8));
+        src_color = _mm256_or_si256(src_color, _mm256_slli_epi32(_mm256_srli_epi32(_mm256_mullo_epi32(v, _mm256_set1_epi32(0xFF)), 15), 0));
 
         // write color into backbuffer
         _mm256_maskstore_epi32((int32_t*)&fb->backbuffer[fine_dst_i], coverage_pass, src_color);
