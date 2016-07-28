@@ -389,6 +389,7 @@ typedef struct tilecmd_drawsmalltri_t
     int32_t edge_dys[3];
     int32_t vert_Zs[3];
     uint32_t max_Z, min_Z;
+    uint32_t shifted_triarea2;
     uint32_t rcp_triarea2;
 } tilecmd_drawsmalltri_t;
 
@@ -401,6 +402,7 @@ typedef struct tilecmd_drawtile_t
     int32_t shifted_es[3];
     int32_t vert_Zs[3];
     uint32_t max_Z, min_Z;
+    uint32_t shifted_triarea2;
     uint32_t rcp_triarea2;
 } tilecmd_drawtile_t;
 
@@ -578,38 +580,45 @@ static void draw_fine_block_smalltri_scalar(framebuffer_t* fb, int32_t fine_dst_
                     shifted_e0 = shifted_e0 >> rcp_triarea2_rshift;
                 }
 
+                // clamp to triangle area
+                if (shifted_e2 > drawcmd->shifted_triarea2)
+                    shifted_e2 = drawcmd->shifted_triarea2;
+
+                if (shifted_e0 > drawcmd->shifted_triarea2)
+                    shifted_e0 = drawcmd->shifted_triarea2;
+
                 assert((shifted_e0 & 0xFFFF) == shifted_e0);
                 assert((shifted_e2 & 0xFFFF) == shifted_e2);
                 assert((rcp_triarea2_mantissa & 0xFFFF) == rcp_triarea2_mantissa);
 
                 // compute non-perspective-correct barycentrics for vertices 1 and 2
-                uint32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 16;
-                uint32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 16;
+                uint32_t u = (shifted_e2 * rcp_triarea2_mantissa) >> 15;
+                uint32_t v = (shifted_e0 * rcp_triarea2_mantissa) >> 15;
 
-                if (u + v > 0x7FFF)
-                    v = 0x7FFF - u;
+                if (u + v > 0xFFFF)
+                    v = 0xFFFF - u;
 
-                assert(u >= 0 && u <= 0x7FFF);
-                assert(v >= 0 && v <= 0x7FFF);
+                assert(u >= 0 && u <= 0xFFFF);
+                assert(v >= 0 && v <= 0xFFFF);
 
                 // not related to vertex w. Just third barycentric. Bad naming.
-                uint32_t w = 0x7FFF - u - v;
-                assert(w >= 0 && w <= 0x7FFF);
+                uint32_t w = 0xFFFF - u - v;
+                assert(w >= 0 && w <= 0xFFFF);
 
-                assert(u + v + w == 0x7FFF);
+                assert(u + v + w == 0xFFFF);
 
                 // compute interpolated depth
-                uint32_t pixel_Z = (drawcmd->vert_Zs[0] << 15)
+                uint32_t pixel_Z = (drawcmd->vert_Zs[0] << 16)
                     + u * (drawcmd->vert_Zs[1] - drawcmd->vert_Zs[0])
                     + v * (drawcmd->vert_Zs[2] - drawcmd->vert_Zs[0]);
 
-                assert(pixel_Z >= drawcmd->min_Z << 15);
-                assert(pixel_Z <= drawcmd->max_Z << 15);
+                assert(pixel_Z >= drawcmd->min_Z << 16);
+                assert(pixel_Z <= drawcmd->max_Z << 16);
 
                 if (pixel_Z < fb->depthbuffer[dst_i])
                 {
                     fb->depthbuffer[dst_i] = pixel_Z;
-                    fb->backbuffer[dst_i] = (0xFF << 24) | ((w * 0xFF / 0x7FFF) << 16) | ((u * 0xFF / 0x7FFF) << 8) | (v * 0xFF / 0x7FFF);
+                    fb->backbuffer[dst_i] = (0xFF << 24) | ((w * 0xFF / 0xFFFF) << 16) | ((u * 0xFF / 0xFFFF) << 8) | (v * 0xFF / 0xFFFF);
                 }
             }
 
@@ -860,7 +869,7 @@ static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i,
     __m256i rcp_triarea2_mantissa256 = _mm256_set1_epi32(rcp_triarea2_mantissa);
 
     // pre-compute depth related stuff
-    __m256i d0 = _mm256_set1_epi32(drawcmd->vert_Zs[0] << 15);
+    __m256i d0 = _mm256_set1_epi32(drawcmd->vert_Zs[0] << 16);
     __m256i dd1 = _mm256_set1_epi32(drawcmd->vert_Zs[1] - drawcmd->vert_Zs[0]);
     __m256i dd2 = _mm256_set1_epi32(drawcmd->vert_Zs[2] - drawcmd->vert_Zs[0]);
 
@@ -892,16 +901,20 @@ static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i,
             shifted_e0 = _mm256_srli_epi32(shifted_e0, rcp_triarea2_rshift);
         }
 
+        // clamp to triangle area
+        shifted_e0 = _mm256_min_epi32(_mm256_set1_epi32(drawcmd->shifted_triarea2), shifted_e0);
+        shifted_e2 = _mm256_min_epi32(_mm256_set1_epi32(drawcmd->shifted_triarea2), shifted_e2);
+
         // compute non-perspective-correct barycentrics for vertices 1 and 2
-        __m256i u = _mm256_srli_epi32(_mm256_mullo_epi32(shifted_e2, rcp_triarea2_mantissa256), 16);
-        __m256i v = _mm256_srli_epi32(_mm256_mullo_epi32(shifted_e0, rcp_triarea2_mantissa256), 16);
+        __m256i u = _mm256_srli_epi32(_mm256_mullo_epi32(shifted_e2, rcp_triarea2_mantissa256), 15);
+        __m256i v = _mm256_srli_epi32(_mm256_mullo_epi32(shifted_e0, rcp_triarea2_mantissa256), 15);
 
         // ensure barycentrics sum to 1
-        __m256i one_minus_u = _mm256_sub_epi32(_mm256_set1_epi32(0x7FFF), u);
+        __m256i one_minus_u = _mm256_sub_epi32(_mm256_set1_epi32(0xFFFF), u);
         v = _mm256_min_epi32(v, one_minus_u);
 
         // not related to vertex w. Just third barycentric. Bad naming.
-        __m256i w = _mm256_sub_epi32(_mm256_set1_epi32(0x7FFF), _mm256_add_epi32(u, v));
+        __m256i w = _mm256_sub_epi32(_mm256_set1_epi32(0xFFFF), _mm256_add_epi32(u, v));
 
         // compute interpolated depth
         __m256i src_depth = d0;
@@ -926,9 +939,9 @@ static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i,
 
         // set color based on barycentrics.
         __m256i src_color = _mm256_set1_epi32(0xFF << 24);
-        src_color = _mm256_or_si256(src_color, _mm256_slli_epi32(_mm256_srli_epi32(_mm256_mullo_epi32(w, _mm256_set1_epi32(0xFF)), 15), 16));
-        src_color = _mm256_or_si256(src_color, _mm256_slli_epi32(_mm256_srli_epi32(_mm256_mullo_epi32(u, _mm256_set1_epi32(0xFF)), 15), 8));
-        src_color = _mm256_or_si256(src_color, _mm256_slli_epi32(_mm256_srli_epi32(_mm256_mullo_epi32(v, _mm256_set1_epi32(0xFF)), 15), 0));
+        src_color = _mm256_or_si256(src_color, _mm256_slli_epi32(_mm256_srli_epi32(_mm256_mullo_epi32(w, _mm256_set1_epi32(0xFF)), 16), 16));
+        src_color = _mm256_or_si256(src_color, _mm256_slli_epi32(_mm256_srli_epi32(_mm256_mullo_epi32(u, _mm256_set1_epi32(0xFF)), 16), 8));
+        src_color = _mm256_or_si256(src_color, _mm256_slli_epi32(_mm256_srli_epi32(_mm256_mullo_epi32(v, _mm256_set1_epi32(0xFF)), 16), 0));
 
         // write color into backbuffer
         _mm256_maskstore_epi32((int32_t*)&fb->backbuffer[fine_dst_i], coverage_pass, src_color);
@@ -1149,8 +1162,8 @@ static void draw_fine_block_largetri(framebuffer_t* fb, int32_t fine_dst_i, cons
                 int32_t rcp_triarea2_rshift = rcp_triarea2_exponent - 127;
 
                 // note: off by one because -1 maps to 0
-                int32_t shifted_e2 = (int32_t)-edges_row[2] - 1;
-                int32_t shifted_e0 = (int32_t)-edges_row[0] - 1;
+                int32_t shifted_e2 = -edges_row[2] - 1;
+                int32_t shifted_e0 = -edges_row[0] - 1;
                 if (rcp_triarea2_rshift < 0)
                 {
                     shifted_e2 = shifted_e2 << -rcp_triarea2_rshift;
@@ -1165,40 +1178,47 @@ static void draw_fine_block_largetri(framebuffer_t* fb, int32_t fine_dst_i, cons
                 shifted_e2 += drawcmd->shifted_es[2];
                 shifted_e0 += drawcmd->shifted_es[0];
 
+                // clamp to triangle area
+                if ((uint32_t)shifted_e2 > drawcmd->shifted_triarea2)
+                    shifted_e2 = drawcmd->shifted_triarea2;
+
+                if ((uint32_t)shifted_e0 > drawcmd->shifted_triarea2)
+                    shifted_e0 = drawcmd->shifted_triarea2;
+
                 assert((shifted_e0 & 0xFFFF) == shifted_e0);
                 assert((shifted_e2 & 0xFFFF) == shifted_e2);
                 assert((rcp_triarea2_mantissa & 0xFFFF) == rcp_triarea2_mantissa);
 
                 // compute non-perspective-correct barycentrics for vertices 1 and 2
-                uint32_t u = ((uint32_t)shifted_e2 * rcp_triarea2_mantissa) >> 16;
-                uint32_t v = ((uint32_t)shifted_e0 * rcp_triarea2_mantissa) >> 16;
+                uint32_t u = ((uint32_t)shifted_e2 * rcp_triarea2_mantissa) >> 15;
+                uint32_t v = ((uint32_t)shifted_e0 * rcp_triarea2_mantissa) >> 15;
 
-                if (u + v > 0x7FFF)
-                    v = 0x7FFF - u;
+                if (u + v > 0xFFFF)
+                    v = 0xFFFF - u;
 
-                assert(u >= 0 && u <= 0x7FFF);
-                assert(v >= 0 && v <= 0x7FFF);
+                assert(u >= 0 && u <= 0xFFFF);
+                assert(v >= 0 && v <= 0xFFFF);
 
                 // not related to vertex w. Just third barycentric. Bad naming.
-                uint32_t w = 0x7FFF - u - v;
-                assert(w >= 0 && w <= 0x7FFF);
+                uint32_t w = 0xFFFF - u - v;
+                assert(w >= 0 && w <= 0xFFFF);
 
-                assert(u + v + w == 0x7FFF);
+                assert(u + v + w == 0xFFFF);
 
                 // compute interpolated depth
-                uint32_t pixel_Z = (drawcmd->vert_Zs[0] << 15)
+                uint32_t pixel_Z = (drawcmd->vert_Zs[0] << 16)
                     + u * (drawcmd->vert_Zs[1] - drawcmd->vert_Zs[0])
                     + v * (drawcmd->vert_Zs[2] - drawcmd->vert_Zs[0]);
 
-                assert(pixel_Z >= drawcmd->min_Z << 15);
-                assert(pixel_Z <= drawcmd->max_Z << 15);
+                assert(pixel_Z >= drawcmd->min_Z << 16);
+                assert(pixel_Z <= drawcmd->max_Z << 16);
 
                 int32_t dst_i = fine_dst_i + (px_y_bits | px_x_bits);
 
                 if (pixel_Z < fb->depthbuffer[dst_i])
                 {
                     fb->depthbuffer[dst_i] = pixel_Z;
-                    fb->backbuffer[dst_i] = (0xFF << 24) | ((w * 0xFF / 0x7FFF) << 16) | ((u * 0xFF / 0x7FFF) << 8) | (v * 0xFF / 0x7FFF);
+                    fb->backbuffer[dst_i] = (0xFF << 24) | ((w * 0xFF / 0xFFFF) << 16) | ((u * 0xFF / 0xFFFF) << 8) | (v * 0xFF / 0xFFFF);
                 }
             }
 
@@ -2206,6 +2226,7 @@ commonsetup_end:
         uint32_t rcp_triarea2_exponent = 127 + (triarea2_mantissa_rshift + 1) - rcp_triarea2_mantissa_rshift;
         uint32_t rcp_triarea2 = (rcp_triarea2_exponent << 16) | rcp_triarea2_mantissa;
 
+        drawsmalltricmd.shifted_triarea2 = triarea2_mantissa >> 1;
         drawsmalltricmd.rcp_triarea2 = rcp_triarea2;
 
         // compute edge equations with reduced precision thanks to being localized to the tiles
@@ -2533,6 +2554,7 @@ commonsetup_end:
                     drawtilecmd.min_Z = min_Z;
                     drawtilecmd.max_Z = max_Z;
 
+                    drawtilecmd.shifted_triarea2 = triarea2_mantissa >> 1;
                     drawtilecmd.rcp_triarea2 = rcp_triarea2;
 
                     fb->perfcounters.largetri_setup += qpc() - setup_start_pc;
