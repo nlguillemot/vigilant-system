@@ -2517,6 +2517,9 @@ commonsetup_end:
             verts[1] = verts[2];
             verts[2] = tmp;
             triarea2 = -triarea2;
+
+            // backface culling
+            goto setup_end;
         }
 
         // compute 1/(2triarea) and convert to a pseudo 8.16 floating point value
@@ -2726,6 +2729,9 @@ commonsetup_end:
             verts[1] = verts[2];
             verts[2] = tmp;
             triarea2 = -triarea2;
+            
+            // backface culling
+            goto setup_end;
         }
 
         // compute 1/(2triarea) and convert to a pseudo 8.16 floating point value
