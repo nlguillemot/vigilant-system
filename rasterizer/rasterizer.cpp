@@ -66,7 +66,7 @@
 
 // If there are too many commands and this buffer gets filled up,
 // then the command buffer for that tile must be flushed.
-#define TILE_COMMAND_BUFFER_SIZE_IN_DWORDS 128
+#define TILE_COMMAND_BUFFER_SIZE_IN_DWORDS 1024
 
 // parallel bit deposit low-order source bits according to mask bits
 #ifdef USE_HSWni
@@ -347,28 +347,14 @@ static_assert(sizeof(kFramebufferPerfcounterNames) / sizeof(*kFramebufferPerfcou
 
 typedef struct framebuffer_tile_perfcounters_t
 {
-    uint64_t smalltri_tile_raster;
-    uint64_t smalltri_coarse_raster;
-
-    uint64_t largetri_tile_raster;
-    uint64_t largetri_coarse_raster;
-
-    uint64_t cmdbuf_pushcmd;
-    uint64_t cmdbuf_resolve;
-
+    uint64_t smalltri_raster;
+    uint64_t largetri_raster;
     uint64_t clear;
 } framebuffer_tile_perfcounters_t;
 
 const char* kFramebufferTilePerfcounterNames[] = {
-    "smalltri_tile_raster",
-    "smalltri_coarse_raster",
-    
-    "largetri_tile_raster",
-    "largetri_coarse_raster",
-    
-    "cmdbuf_pushcmd",
-    "cmdbuf_resolve",
-    
+    "smalltri_raster",
+    "largetri_raster",
     "clear",
 };
 
@@ -388,7 +374,8 @@ typedef struct tilecmd_drawsmalltri_t
     int32_t vert_Zs[3];
     uint32_t max_Z, min_Z;
     uint32_t shifted_triarea2;
-    uint32_t rcp_triarea2;
+    uint32_t rcp_triarea2_mantissa;
+    int32_t rcp_triarea2_rshift;
 } tilecmd_drawsmalltri_t;
 
 typedef struct tilecmd_drawtile_t
@@ -560,9 +547,8 @@ static void draw_fine_block_smalltri_scalar(framebuffer_t* fb, int32_t fine_dst_
 
             if (!pixel_discarded)
             {
-                uint32_t rcp_triarea2_mantissa = (drawcmd->rcp_triarea2 & 0xFFFF);
-                uint32_t rcp_triarea2_exponent = (drawcmd->rcp_triarea2 & 0xFF0000) >> 16;
-                int32_t rcp_triarea2_rshift = rcp_triarea2_exponent - 127;
+                uint32_t rcp_triarea2_mantissa = drawcmd->rcp_triarea2_mantissa;
+                int32_t rcp_triarea2_rshift = drawcmd->rcp_triarea2_rshift;
 
                 // note: off by one because -1 maps to 0
                 uint32_t shifted_e2 = -edges_row[2] - 1;
@@ -635,8 +621,6 @@ static void draw_fine_block_smalltri_scalar(framebuffer_t* fb, int32_t fine_dst_
 
 static void draw_coarse_block_smalltri_scalar(framebuffer_t* fb, int32_t coarse_dst_i, const tilecmd_drawsmalltri_t* drawcmd)
 {
-    uint64_t coarse_start_pc = qpc();
-
     int32_t fine_edge_dxs[3];
     int32_t fine_edge_dys[3];
     for (int32_t v = 0; v < 3; v++)
@@ -729,14 +713,10 @@ static void draw_coarse_block_smalltri_scalar(framebuffer_t* fb, int32_t coarse_
             edge_trivRejs[v] += fine_edge_dys[v];
         }
     }
-
-    fb->tile_perfcounters[coarse_dst_i / PIXELS_PER_TILE].smalltri_coarse_raster += qpc() - coarse_start_pc;
 }
 
 static void draw_tile_smalltri_scalar(framebuffer_t* fb, int32_t tile_id, const tilecmd_drawsmalltri_t* drawcmd)
 {
-    uint64_t tile_start_pc = qpc();
-
     int32_t coarse_edge_dxs[3];
     int32_t coarse_edge_dys[3];
     for (int32_t v = 0; v < 3; v++)
@@ -808,9 +788,7 @@ static void draw_tile_smalltri_scalar(framebuffer_t* fb, int32_t tile_id, const 
 
                 uint32_t dst_i = tile_dst_i + (cb_y_bits | cb_x_bits);
 
-                fb->tile_perfcounters[tile_id].smalltri_tile_raster += qpc() - tile_start_pc;
                 draw_coarse_block_smalltri_scalar(fb, dst_i, &cbargs);
-                tile_start_pc = qpc();
             }
 
             for (int32_t v = 0; v < 3; v++)
@@ -834,8 +812,6 @@ static void draw_tile_smalltri_scalar(framebuffer_t* fb, int32_t tile_id, const 
             edge_trivRejs[v] += coarse_edge_dys[v];
         }
     }
-
-    fb->tile_perfcounters[tile_id].smalltri_tile_raster = qpc() - tile_start_pc;
 }
 
 #ifdef USE_HSWni
@@ -849,33 +825,61 @@ static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i,
     // Thus, the 4x4 fine block is rasterized in two iterations.
     // one iteration for the top 4x2, and one for the bottom 4x2.
 
-    __m256i edges[3];
-
     tilecmd_drawsmalltri_t drawcmd = *pDrawcmd;
 
-    for (int32_t i = 0; i < 3; i++)
+    __m256i edges[3];
+    // for (int32_t i = 0; i < 3; i++)
     {
-        int32_t dx = drawcmd.edge_dxs[i];
-        __m256i mdx = _mm256_set1_epi32(dx);
-        __m256i m2dx = _mm256_set1_epi32(dx + dx);
-        int32_t dy = drawcmd.edge_dys[i];
+        __m256i edge0 = _mm256_set1_epi32(drawcmd.edges[0]);
+        __m256i edge1 = _mm256_set1_epi32(drawcmd.edges[1]);
+        __m256i edge2 = _mm256_set1_epi32(drawcmd.edges[2]);
+
+        int32_t dy0 = drawcmd.edge_dys[0];
+        int32_t dy1 = drawcmd.edge_dys[1];
+        int32_t dy2 = drawcmd.edge_dys[2];
 
         // initialize 0 0 dy dy 0 0 dy dy
-        __m256i yoffset = _mm256_unpacklo_epi64(_mm256_setzero_si256(), _mm256_set1_epi32(dy));
+        __m256i yoffset0 = _mm256_unpacklo_epi64(_mm256_setzero_si256(), _mm256_set1_epi32(dy0));
+        __m256i yoffset1 = _mm256_unpacklo_epi64(_mm256_setzero_si256(), _mm256_set1_epi32(dy1));
+        __m256i yoffset2 = _mm256_unpacklo_epi64(_mm256_setzero_si256(), _mm256_set1_epi32(dy2));
+        
+        edge0 = _mm256_add_epi32(edge0, yoffset0);
+        edge1 = _mm256_add_epi32(edge1, yoffset1);
+        edge2 = _mm256_add_epi32(edge2, yoffset2);
+
+        int32_t dx0 = drawcmd.edge_dxs[0];
+        int32_t dx1 = drawcmd.edge_dxs[1];
+        int32_t dx2 = drawcmd.edge_dxs[2];
         
         // initialize 0 dx 0 dx dx2 dx3 dx2 dx3
-        __m256i xoffset = _mm256_unpacklo_epi32(_mm256_setzero_si256(), mdx);
-        xoffset = _mm256_add_epi32(xoffset, _mm256_and_si256(m2dx, _mm256_setr_epi32(0, 0, 0, 0, -1, -1, -1, -1)));
+        const __m256i dx2_mask = _mm256_setr_epi32(0, 0, 0, 0, -1, -1, -1, -1);
+        
+        __m256i mdx0 = _mm256_set1_epi32(dx0);
+        __m256i m2dx0 = _mm256_add_epi32(mdx0, mdx0);
+        __m256i xoffset0 = _mm256_unpacklo_epi32(_mm256_setzero_si256(), mdx0);
+        xoffset0 = _mm256_add_epi32(xoffset0, _mm256_and_si256(m2dx0, dx2_mask));
+        edge0 = _mm256_add_epi32(edge0, xoffset0);
 
-        edges[i] = _mm256_set1_epi32(drawcmd.edges[i]);
-        edges[i] = _mm256_add_epi32(edges[i], yoffset);
-        edges[i] = _mm256_add_epi32(edges[i], xoffset);
+        __m256i mdx1 = _mm256_set1_epi32(dx1);
+        __m256i m2dx1 = _mm256_add_epi32(mdx1, mdx1);
+        __m256i xoffset1 = _mm256_unpacklo_epi32(_mm256_setzero_si256(), mdx1);
+        xoffset1 = _mm256_add_epi32(xoffset1, _mm256_and_si256(m2dx1, dx2_mask));
+        edge1 = _mm256_add_epi32(edge1, xoffset1);
+
+        __m256i mdx2 = _mm256_set1_epi32(dx2);
+        __m256i m2dx2 = _mm256_add_epi32(mdx2, mdx2);
+        __m256i xoffset2 = _mm256_unpacklo_epi32(_mm256_setzero_si256(), mdx2);
+        xoffset2 = _mm256_add_epi32(xoffset2, _mm256_and_si256(m2dx2, dx2_mask));
+        edge2 = _mm256_add_epi32(edge2, xoffset2);
+
+        edges[0] = edge0;
+        edges[1] = edge1;
+        edges[2] = edge2;
     }
 
     // pre-compute triarea2 related stuff
-    int32_t rcp_triarea2_mantissa = drawcmd.rcp_triarea2 & 0xFFFF;
-    int32_t rcp_triarea2_exponent = (drawcmd.rcp_triarea2 & 0xFF0000) >> 16;
-    int32_t rcp_triarea2_rshift = rcp_triarea2_exponent - 127;
+    int32_t rcp_triarea2_mantissa = drawcmd.rcp_triarea2_mantissa;
+    int32_t rcp_triarea2_rshift = drawcmd.rcp_triarea2_rshift;
     __m256i rcp_triarea2_mantissa256 = _mm256_set1_epi32(rcp_triarea2_mantissa);
 
     // pre-compute depth related stuff
@@ -887,11 +891,11 @@ static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i,
     for (int32_t fineblock_half = 0; fineblock_half < 2; fineblock_half++)
     {
         // compute all pixels passing the edge equation
-        __m256i coverage_pass = _mm256_cmpgt_epi32(_mm256_setzero_si256(), edges[0]);
-        coverage_pass = _mm256_and_si256(coverage_pass, _mm256_cmpgt_epi32(_mm256_setzero_si256(), edges[1]));
-        coverage_pass = _mm256_and_si256(coverage_pass, _mm256_cmpgt_epi32(_mm256_setzero_si256(), edges[2]));
-
-        int coverage_mask = _mm256_movemask_epi8(coverage_pass);
+        __m256i coverage_pass = edges[0];
+        coverage_pass = _mm256_and_si256(coverage_pass, edges[1]);
+        coverage_pass = _mm256_and_si256(coverage_pass, edges[2]);
+        
+        int coverage_mask = _mm256_movemask_epi8(coverage_pass) & 0x88888888;
 
         // early-out if no pixels pass the test
         if (!coverage_mask)
@@ -954,14 +958,19 @@ static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i,
         src_color = _mm256_or_si256(src_color, _mm256_slli_epi32(_mm256_srli_epi32(_mm256_mullo_epi32(v, _mm256_set1_epi32(0xFF)), 16), 0));
 
         // write color into backbuffer
-        _mm256_maskstore_epi32((int32_t*)&fb->backbuffer[fine_dst_i], coverage_pass, src_color);
+        _mm256_maskstore_epi32((int32_t*)&fb->backbuffer[fine_dst_i], depth_pass, src_color);
 
     end_fineblock_half:
         // offset edge equations down for the second half
-        for (int32_t i = 0; i < 3; i++)
+        // for (int32_t i = 0; i < 3; i++)
         {
-            __m256i dy2 = _mm256_set1_epi32(drawcmd.edge_dys[i] * 2);
-            edges[i] = _mm256_add_epi32(edges[i], dy2);
+            __m256i dy2_0 = _mm256_set1_epi32(drawcmd.edge_dys[0] * 2);
+            __m256i dy2_1 = _mm256_set1_epi32(drawcmd.edge_dys[1] * 2);
+            __m256i dy2_2 = _mm256_set1_epi32(drawcmd.edge_dys[2] * 2);
+
+            edges[0] = _mm256_add_epi32(edges[0], dy2_0);
+            edges[1] = _mm256_add_epi32(edges[1], dy2_1);
+            edges[2] = _mm256_add_epi32(edges[2], dy2_2);
         }
 
         // offset destination to the next half of the fine block
@@ -1044,16 +1053,12 @@ static void draw_coarse_block_smalltri_avx2(framebuffer_t* fb, int32_t coarse_ds
             edge_trivRejs[i] = _mm256_add_epi32(edge_trivRejs[i], dy2);
         }
     }
-
-    fb->tile_perfcounters[coarse_dst_i / PIXELS_PER_TILE].smalltri_coarse_raster += qpc() - coarse_start_pc;
 }
 #endif
 
 #ifdef USE_HSWni
 static void draw_tile_smalltri_avx2(framebuffer_t* fb, int32_t tile_id, const tilecmd_drawsmalltri_t* drawcmd)
 {
-    uint64_t tile_start_pc = qpc();
-
     // tiles are made out of 4x4 coarse blocks, organized as:
     //  0  1  4  5
     //  2  3  6  7
@@ -1122,8 +1127,6 @@ static void draw_tile_smalltri_avx2(framebuffer_t* fb, int32_t tile_id, const ti
             edge_trivRejs[i] = _mm256_add_epi32(edge_trivRejs[i], dy2);
         }
     }
-
-    fb->tile_perfcounters[tile_id].smalltri_tile_raster = qpc() - tile_start_pc;
 }
 #endif
 
@@ -1364,8 +1367,6 @@ static void draw_coarse_block_largetri_scalar(framebuffer_t* fb, int32_t tile_id
             }
         }
     }
-
-    fb->tile_perfcounters[tile_id].largetri_coarse_raster += qpc() - coarse_start_pc;
 }
 
 template<uint32_t TestEdgeMask>
@@ -1472,8 +1473,6 @@ static void draw_tile_largetri_scalar(framebuffer_t* fb, int32_t tile_id, const 
                     cbargs.edges[v] = edges_row[v];
                 }
 
-                fb->tile_perfcounters[tile_id].largetri_tile_raster += qpc() - tile_start_pc;
-                
                 switch (newTestEdgeMask)
                 {
                 case 0:
@@ -1534,8 +1533,6 @@ static void draw_tile_largetri_scalar(framebuffer_t* fb, int32_t tile_id, const 
             }
         }
     }
-    
-    fb->tile_perfcounters[tile_id].largetri_tile_raster += qpc() - tile_start_pc;
 }
 
 #if 0
@@ -1543,8 +1540,6 @@ static void draw_tile_largetri_scalar(framebuffer_t* fb, int32_t tile_id, const 
 template<uint32_t TestEdgeMask>
 static void draw_tile_largetri_avx2(framebuffer_t* fb, int32_t tile_id, const tilecmd_drawtile_t* drawcmd)
 {
-    uint64_t tile_start_pc = qpc();
-
     // tiles are made out of 4x4 coarse blocks, organized as:
     //  0  1  4  5
     //  2  3  6  7
@@ -1638,8 +1633,6 @@ static void draw_tile_largetri_avx2(framebuffer_t* fb, int32_t tile_id, const ti
 
                 uint32_t dst_i = tile_dst_i + (cb_y_bits | cb_x_bits);
 
-                fb->tile_perfcounters[tile_id].largetri_tile_raster += qpc() - tile_start_pc;
-
                 switch (drawtilecmd.tilecmd_id)
                 {
                 case tilecmd_id_drawtile_0edge:
@@ -1669,16 +1662,12 @@ static void draw_tile_largetri_avx2(framebuffer_t* fb, int32_t tile_id, const ti
             edge_trivAccs[i] = _mm256_add_epi32(edge_trivAccs[i], dy2);
         }
     }
-
-    fb->tile_perfcounters[tile_id].largetri_tile_raster += qpc() - tile_start_pc;
 }
 #endif
 #endif
 
 static void clear_tile(framebuffer_t* fb, int32_t tile_id, tilecmd_cleartile_t* cmd)
 {
-    uint64_t clear_start_pc = qpc();
-
     int32_t tile_start_i = PIXELS_PER_TILE * tile_id;
     int32_t tile_end_i = tile_start_i + PIXELS_PER_TILE;
     uint32_t color = cmd->color;
@@ -1687,8 +1676,6 @@ static void clear_tile(framebuffer_t* fb, int32_t tile_id, tilecmd_cleartile_t* 
         fb->backbuffer[px] = color;
         fb->depthbuffer[px] = 0xFFFFFFFF;
     }
-
-    fb->tile_perfcounters[tile_id].clear += qpc() - clear_start_pc;
 }
 
 static void debugprint_cmdbuf(tile_cmdbuf_t* cmdbuf)
@@ -1721,8 +1708,6 @@ static void debugprint_cmdbuf(tile_cmdbuf_t* cmdbuf)
 
 static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
 {
-    uint64_t resolve_start_pc = qpc();
-
     tile_cmdbuf_t* cmdbuf = &fb->tile_cmdbufs[tile_id];
     
     uint32_t* cmd;
@@ -1740,7 +1725,7 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
         }
         else if (tilecmd_id == tilecmd_id_drawsmalltri)
         {
-            fb->tile_perfcounters[tile_id].cmdbuf_resolve += qpc() - resolve_start_pc;
+            uint64_t smalltri_start_pc = qpc();
 
 #ifdef USE_HSWni
             draw_tile_smalltri_avx2(fb, tile_id, (tilecmd_drawsmalltri_t*)cmd);
@@ -1748,13 +1733,13 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
             draw_tile_smalltri_scalar(fb, tile_id, (tilecmd_drawsmalltri_t*)cmd);
 #endif
 
-            resolve_start_pc = qpc();
+            fb->tile_perfcounters[tile_id].smalltri_raster += qpc() - smalltri_start_pc;
 
             cmd += sizeof(tilecmd_drawsmalltri_t) / sizeof(uint32_t);
         }
         else if (tilecmd_id >= tilecmd_id_drawlargetri_0edgemask && tilecmd_id <= tilecmd_id_drawlargetri_7edgemask)
         {   
-            fb->tile_perfcounters[tile_id].cmdbuf_resolve += qpc() - resolve_start_pc;
+            uint64_t largetri_start_pc = qpc();
 
 #if defined(USE_HSWni) && 0
             switch (tilecmd_id - tilecmd_id_drawlargetri_0edgemask)
@@ -1814,15 +1799,17 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
             }
 #endif
 
-            resolve_start_pc = qpc();
+            fb->tile_perfcounters[tile_id].largetri_raster += qpc() - largetri_start_pc;
 
             cmd += sizeof(tilecmd_drawtile_t) / sizeof(uint32_t);
         }
         else if (tilecmd_id == tilecmd_id_cleartile)
         {
-            fb->tile_perfcounters[tile_id].cmdbuf_resolve += qpc() - resolve_start_pc;
+            uint64_t clear_start_pc = qpc();
+
             clear_tile(fb, tile_id, (tilecmd_cleartile_t*)cmd);
-            resolve_start_pc = qpc();
+
+            fb->tile_perfcounters[tile_id].clear += qpc() - clear_start_pc;
 
             cmd += sizeof(tilecmd_cleartile_t) / sizeof(uint32_t);
         }
@@ -1846,15 +1833,11 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
     assert(cmd != cmdbuf->cmdbuf_end);
 
     cmdbuf->cmdbuf_read = cmd;
-
-    fb->tile_perfcounters[tile_id].cmdbuf_resolve += qpc() - resolve_start_pc;
 }
 
 static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const uint32_t* cmd_dwords, int32_t num_dwords)
 {
     assert(tile_id < fb->total_num_tiles);
-
-    uint64_t pushcmd_start_pc = qpc();
 
     tile_cmdbuf_t* cmdbuf = &fb->tile_cmdbufs[tile_id];
 
@@ -1870,9 +1853,7 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
         // read ptr is after write ptr and there's not enough room in between
         // therefore, need to flush
         // note: write is not allowed to "catch up" to read from behind, hence why a +1 is added to keep them separate.
-        fb->tile_perfcounters[tile_id].cmdbuf_pushcmd += qpc() - pushcmd_start_pc;
         framebuffer_resolve_tile(fb, tile_id);
-        pushcmd_start_pc = qpc();
 
         // after resolve, read should now have "caught up" to write from behind
         assert(cmdbuf->cmdbuf_read == cmdbuf->cmdbuf_write);
@@ -1893,9 +1874,7 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
         {
             // write is not allowed to catch up to read,
             // so make sure read catches up to write instead.
-            fb->tile_perfcounters[tile_id].cmdbuf_pushcmd += qpc() - pushcmd_start_pc;
             framebuffer_resolve_tile(fb, tile_id);
-            pushcmd_start_pc = qpc();
 
             // reset read back to start since we'll set write back to start also
             cmdbuf->cmdbuf_read = cmdbuf->cmdbuf_start;
@@ -1909,9 +1888,7 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
             // read ptr is after write ptr and there's not enough room in between
             // therefore, need to flush
             // note: write is not allowed to "catch up" to read from behind, hence why a +1 is added to keep them separate.
-            fb->tile_perfcounters[tile_id].cmdbuf_pushcmd += qpc() - pushcmd_start_pc;
             framebuffer_resolve_tile(fb, tile_id);
-            pushcmd_start_pc = qpc();
 
             // after resolve, read should now have "caught up" to write from behind
             assert(cmdbuf->cmdbuf_read == cmdbuf->cmdbuf_write);
@@ -1940,9 +1917,7 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
         {
             // write is not allowed to catch up to read,
             // so make sure read catches up to write instead.
-            fb->tile_perfcounters[tile_id].cmdbuf_pushcmd += qpc() - pushcmd_start_pc;
             framebuffer_resolve_tile(fb, tile_id);
-            pushcmd_start_pc = qpc();
 
             // since the resolve made read ptr catch up to write ptr, that means read reached the end
             // that also means it currently looped back to the start, so the write ptr can be put there too
@@ -1951,8 +1926,6 @@ static void framebuffer_push_tilecmd(framebuffer_t* fb, int32_t tile_id, const u
 
         cmdbuf->cmdbuf_write = cmdbuf->cmdbuf_start;
     }
-
-    fb->tile_perfcounters[tile_id].cmdbuf_pushcmd += qpc() - pushcmd_start_pc;
 
     // DEBUGGING: Always flush. Helpful since it gives you a straight call stack through the command list.
     // framebuffer_resolve_tile(fb, tile_id);
@@ -2447,11 +2420,11 @@ commonsetup_end:
 
         assert(rcp_triarea2_mantissa < 0x10000);
         rcp_triarea2_mantissa = rcp_triarea2_mantissa & 0xFFFF;
-        uint32_t rcp_triarea2_exponent = 127 + (triarea2_mantissa_rshift + 1) - rcp_triarea2_mantissa_rshift;
-        uint32_t rcp_triarea2 = (rcp_triarea2_exponent << 16) | rcp_triarea2_mantissa;
+        rcp_triarea2_mantissa_rshift = (triarea2_mantissa_rshift + 1) - rcp_triarea2_mantissa_rshift;
 
         drawsmalltricmd.shifted_triarea2 = triarea2_mantissa >> 1;
-        drawsmalltricmd.rcp_triarea2 = rcp_triarea2;
+        drawsmalltricmd.rcp_triarea2_mantissa = rcp_triarea2_mantissa;
+        drawsmalltricmd.rcp_triarea2_rshift = rcp_triarea2_mantissa_rshift;
 
         // compute edge equations with reduced precision thanks to being localized to the tiles
 
