@@ -388,7 +388,8 @@ typedef struct tilecmd_drawtile_t
     int32_t vert_Zs[3];
     uint32_t max_Z, min_Z;
     uint32_t shifted_triarea2;
-    uint32_t rcp_triarea2;
+    uint32_t rcp_triarea2_mantissa;
+    int32_t rcp_triarea2_rshift;
 } tilecmd_drawtile_t;
 
 typedef struct tilecmd_cleartile_t
@@ -1178,9 +1179,8 @@ static void draw_fine_block_largetri_scalar(framebuffer_t* fb, int32_t fine_dst_
 
             if (!pixel_discarded)
             {
-                int32_t rcp_triarea2_mantissa = (drawcmd->rcp_triarea2 & 0xFFFF);
-                int32_t rcp_triarea2_exponent = (drawcmd->rcp_triarea2 & 0xFF0000) >> 16;
-                int32_t rcp_triarea2_rshift = rcp_triarea2_exponent - 127;
+                uint32_t rcp_triarea2_mantissa = drawcmd->rcp_triarea2_mantissa;
+                int32_t rcp_triarea2_rshift = drawcmd->rcp_triarea2_rshift;
 
                 // note: off by one because -1 maps to 0
                 int32_t shifted_e2 = -edges_row[2] - 1;
@@ -2602,8 +2602,7 @@ commonsetup_end:
 
         assert(rcp_triarea2_mantissa < 0x10000);
         rcp_triarea2_mantissa = rcp_triarea2_mantissa & 0xFFFF;
-        uint32_t rcp_triarea2_exponent = 127 + triarea2_mantissa_rshift - rcp_triarea2_mantissa_rshift + 1;
-        uint32_t rcp_triarea2 = (rcp_triarea2_exponent << 16) | rcp_triarea2_mantissa;
+        rcp_triarea2_mantissa_rshift = (triarea2_mantissa_rshift + 1) - rcp_triarea2_mantissa_rshift;
 
         int64_t edges[3];
         int64_t edge_dxs[3], edge_dys[3];
@@ -2714,15 +2713,11 @@ commonsetup_end:
                             drawtilecmd.edges[v] = 0;
 
                             // compute an initial offset for the unnormalized barycentric coordinates
-                            int32_t rcp_triarea2_mantissa = (rcp_triarea2 & 0xFFFF);
-                            int32_t rcp_triarea2_exponent = (rcp_triarea2 & 0xFF0000) >> 16;
-                            int32_t rcp_triarea2_rshift = rcp_triarea2_exponent - 127;
-
                             int64_t shifted_e = -tile_i_edges[v];
-                            if (rcp_triarea2_rshift < 0)
-                                shifted_e = shifted_e << -rcp_triarea2_rshift;
+                            if (rcp_triarea2_mantissa_rshift < 0)
+                                shifted_e = shifted_e << -rcp_triarea2_mantissa_rshift;
                             else
-                                shifted_e = shifted_e >> rcp_triarea2_rshift;
+                                shifted_e = shifted_e >> rcp_triarea2_mantissa_rshift;
 
                             assert(shifted_e >= INT32_MIN && shifted_e <= INT32_MAX);
                             drawtilecmd.shifted_es[v] = (int32_t)shifted_e;
@@ -2738,7 +2733,8 @@ commonsetup_end:
                     drawtilecmd.max_Z = max_Z;
 
                     drawtilecmd.shifted_triarea2 = triarea2_mantissa >> 1;
-                    drawtilecmd.rcp_triarea2 = rcp_triarea2;
+                    drawtilecmd.rcp_triarea2_mantissa = rcp_triarea2_mantissa;
+                    drawtilecmd.rcp_triarea2_rshift = rcp_triarea2_mantissa_rshift;
 
                     fb->perfcounters.largetri_setup += qpc() - setup_start_pc;
                     framebuffer_push_tilecmd(fb, tile_i, &drawtilecmd.tilecmd_id, sizeof(drawtilecmd) / sizeof(uint32_t));
