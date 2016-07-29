@@ -28,7 +28,7 @@
 // ------------------
 // Which instruction set to use
 // Haswell New Instructions (AVX2)
-// #define USE_HSWni
+#define USE_HSWni
 // ------------------
 
 // Sized according to the Larrabee rasterizer's description
@@ -839,7 +839,7 @@ static void draw_tile_smalltri_scalar(framebuffer_t* fb, int32_t tile_id, const 
 }
 
 #ifdef USE_HSWni
-static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i, const tilecmd_drawsmalltri_t* drawcmd)
+static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i, const tilecmd_drawsmalltri_t* pDrawcmd)
 {
     // pixels are stored in fine blocks according to a morton code ordering:
     //  0  1  4  5
@@ -851,26 +851,37 @@ static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i,
 
     __m256i edges[3];
 
+    tilecmd_drawsmalltri_t drawcmd = *pDrawcmd;
+
     for (int32_t i = 0; i < 3; i++)
     {
-        int32_t dx = drawcmd->edge_dxs[i];
-        int32_t dy = drawcmd->edge_dys[i];
+        int32_t dx = drawcmd.edge_dxs[i];
+        __m256i mdx = _mm256_set1_epi32(dx);
+        __m256i m2dx = _mm256_set1_epi32(dx + dx);
+        int32_t dy = drawcmd.edge_dys[i];
 
-        edges[i] = _mm256_add_epi32(
-            _mm256_set1_epi32(drawcmd->edges[i]),
-            _mm256_setr_epi32(0, dx, dy, dx + dy, dx * 2, dx * 3, dx * 2 + dy, dx * 3 + dy));
+        // initialize 0 0 dy dy 0 0 dy dy
+        __m256i yoffset = _mm256_unpacklo_epi64(_mm256_setzero_si256(), _mm256_set1_epi32(dy));
+        
+        // initialize 0 dx 0 dx dx2 dx3 dx2 dx3
+        __m256i xoffset = _mm256_unpacklo_epi32(_mm256_setzero_si256(), mdx);
+        xoffset = _mm256_add_epi32(xoffset, _mm256_and_si256(m2dx, _mm256_setr_epi32(0, 0, 0, 0, -1, -1, -1, -1)));
+
+        edges[i] = _mm256_set1_epi32(drawcmd.edges[i]);
+        edges[i] = _mm256_add_epi32(edges[i], yoffset);
+        edges[i] = _mm256_add_epi32(edges[i], xoffset);
     }
 
     // pre-compute triarea2 related stuff
-    int32_t rcp_triarea2_mantissa = drawcmd->rcp_triarea2 & 0xFFFF;
-    int32_t rcp_triarea2_exponent = (drawcmd->rcp_triarea2 & 0xFF0000) >> 16;
+    int32_t rcp_triarea2_mantissa = drawcmd.rcp_triarea2 & 0xFFFF;
+    int32_t rcp_triarea2_exponent = (drawcmd.rcp_triarea2 & 0xFF0000) >> 16;
     int32_t rcp_triarea2_rshift = rcp_triarea2_exponent - 127;
     __m256i rcp_triarea2_mantissa256 = _mm256_set1_epi32(rcp_triarea2_mantissa);
 
     // pre-compute depth related stuff
-    __m256i d0 = _mm256_set1_epi32(drawcmd->vert_Zs[0] << 16);
-    __m256i dd1 = _mm256_set1_epi32(drawcmd->vert_Zs[1] - drawcmd->vert_Zs[0]);
-    __m256i dd2 = _mm256_set1_epi32(drawcmd->vert_Zs[2] - drawcmd->vert_Zs[0]);
+    __m256i d0 = _mm256_set1_epi32(drawcmd.vert_Zs[0] << 16);
+    __m256i dd1 = _mm256_set1_epi32(drawcmd.vert_Zs[1] - drawcmd.vert_Zs[0]);
+    __m256i dd2 = _mm256_set1_epi32(drawcmd.vert_Zs[2] - drawcmd.vert_Zs[0]);
 
     // rasterize both fine block halves
     for (int32_t fineblock_half = 0; fineblock_half < 2; fineblock_half++)
@@ -901,8 +912,8 @@ static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i,
         }
 
         // clamp to triangle area
-        shifted_e0 = _mm256_min_epi32(_mm256_set1_epi32(drawcmd->shifted_triarea2), shifted_e0);
-        shifted_e2 = _mm256_min_epi32(_mm256_set1_epi32(drawcmd->shifted_triarea2), shifted_e2);
+        shifted_e0 = _mm256_min_epi32(_mm256_set1_epi32(drawcmd.shifted_triarea2), shifted_e0);
+        shifted_e2 = _mm256_min_epi32(_mm256_set1_epi32(drawcmd.shifted_triarea2), shifted_e2);
 
         // compute non-perspective-correct barycentrics for vertices 1 and 2
         __m256i u = _mm256_srli_epi32(_mm256_mullo_epi32(shifted_e2, rcp_triarea2_mantissa256), 15);
@@ -949,7 +960,7 @@ static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i,
         // offset edge equations down for the second half
         for (int32_t i = 0; i < 3; i++)
         {
-            __m256i dy2 = _mm256_set1_epi32(drawcmd->edge_dys[i] * 2);
+            __m256i dy2 = _mm256_set1_epi32(drawcmd.edge_dys[i] * 2);
             edges[i] = _mm256_add_epi32(edges[i], dy2);
         }
 
@@ -1527,6 +1538,7 @@ static void draw_tile_largetri_scalar(framebuffer_t* fb, int32_t tile_id, const 
     fb->tile_perfcounters[tile_id].largetri_tile_raster += qpc() - tile_start_pc;
 }
 
+#if 0
 #ifdef USE_HSWni
 template<uint32_t TestEdgeMask>
 static void draw_tile_largetri_avx2(framebuffer_t* fb, int32_t tile_id, const tilecmd_drawtile_t* drawcmd)
@@ -1661,6 +1673,7 @@ static void draw_tile_largetri_avx2(framebuffer_t* fb, int32_t tile_id, const ti
     fb->tile_perfcounters[tile_id].largetri_tile_raster += qpc() - tile_start_pc;
 }
 #endif
+#endif
 
 static void clear_tile(framebuffer_t* fb, int32_t tile_id, tilecmd_cleartile_t* cmd)
 {
@@ -1743,7 +1756,7 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
         {   
             fb->tile_perfcounters[tile_id].cmdbuf_resolve += qpc() - resolve_start_pc;
 
-#ifdef USE_HSWni
+#if defined(USE_HSWni) && 0
             switch (tilecmd_id - tilecmd_id_drawlargetri_0edgemask)
             {
             case 0:
