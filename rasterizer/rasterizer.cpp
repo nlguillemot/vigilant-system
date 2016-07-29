@@ -29,6 +29,9 @@
 // Which instruction set to use
 // Haswell New Instructions (AVX2)
 #define USE_HSWni
+
+// Can disable perfcounters since they cost performance (QPC is slow)
+// #define ENABLE_PERFCOUNTERS
 // ------------------
 
 // Sized according to the Larrabee rasterizer's description
@@ -195,6 +198,7 @@ __forceinline uint64_t lzcnt64(uint64_t value)
 }
 #endif
 
+#ifdef ENABLE_PERFCOUNTERS
 #ifdef _WIN32
 uint64_t qpc()
 {
@@ -215,6 +219,7 @@ uint64_t qpf()
 }
 #else
 "Missing QPF implementation for this platform!";
+#endif
 #endif
 
 static int32_t s1516_add(int32_t a, int32_t b)
@@ -330,32 +335,48 @@ typedef enum tilecmd_id_t
 
 typedef struct framebuffer_perfcounters_t
 {
+#ifdef ENABLE_PERFCOUNTERS
     uint64_t clipping;
     uint64_t common_setup;
     uint64_t smalltri_setup;
     uint64_t largetri_setup;
+#else
+    uint64_t unused;
+#endif
 } framebuffer_perfcounters_t;
 
 const char* kFramebufferPerfcounterNames[] = {
+#ifdef ENABLE_PERFCOUNTERS
     "clipping",
     "common_setup",
     "smalltri_setup",
     "largetri_setup"
+#else
+    ""
+#endif
 };
 
 static_assert(sizeof(kFramebufferPerfcounterNames) / sizeof(*kFramebufferPerfcounterNames) == sizeof(framebuffer_perfcounters_t) / sizeof(uint64_t), "Names for perfcounters");
 
 typedef struct framebuffer_tile_perfcounters_t
 {
+#ifdef ENABLE_PERFCOUNTERS
     uint64_t smalltri_raster;
     uint64_t largetri_raster;
     uint64_t clear;
+#else
+    uint64_t unused;
+#endif
 } framebuffer_tile_perfcounters_t;
 
 const char* kFramebufferTilePerfcounterNames[] = {
+#ifdef ENABLE_PERFCOUNTERS
     "smalltri_raster",
     "largetri_raster",
     "clear",
+#else
+    ""
+#endif
 };
 
 static_assert(sizeof(kFramebufferTilePerfcounterNames) / sizeof(*kFramebufferTilePerfcounterNames) == sizeof(framebuffer_tile_perfcounters_t) / sizeof(uint64_t), "Names for perfcounters");
@@ -419,10 +440,12 @@ typedef struct framebuffer_t
     // pixels_per_row_of_tiles * num_tile_rows
     int32_t pixels_per_slice;
 
+#ifdef ENABLE_PERFCOUNTERS
     // performance counters
     uint64_t pc_frequency;
     framebuffer_perfcounters_t perfcounters;
     framebuffer_tile_perfcounters_t* tile_perfcounters;
+#endif
 
 } framebuffer_t;
 
@@ -479,12 +502,14 @@ framebuffer_t* new_framebuffer(int32_t width, int32_t height)
         fb->tile_cmdbufs[i].cmdbuf_write = fb->tile_cmdbufs[i].cmdbuf_start;
     }
 
+#ifdef ENABLE_PERFCOUNTERS
     fb->pc_frequency = qpf();
 
     memset(&fb->perfcounters, 0, sizeof(framebuffer_perfcounters_t));
 
     fb->tile_perfcounters = (framebuffer_tile_perfcounters_t*)malloc(fb->total_num_tiles * sizeof(framebuffer_tile_perfcounters_t));
     memset(fb->tile_perfcounters, 0, fb->total_num_tiles * sizeof(framebuffer_tile_perfcounters_t));
+#endif
     
     return fb;
 }
@@ -494,7 +519,10 @@ void delete_framebuffer(framebuffer_t* fb)
     if (!fb)
         return;
 
+#ifdef ENABLE_PERFCOUNTERS
     free(fb->tile_perfcounters);
+#endif
+
     free(fb->tile_cmdbufs);
     free(fb->tile_cmdpool);
     _aligned_free(fb->depthbuffer);
@@ -981,10 +1009,8 @@ static void draw_fine_block_smalltri_avx2(framebuffer_t* fb, int32_t fine_dst_i,
 #endif
 
 #ifdef USE_HSWni
-static void draw_coarse_block_smalltri_avx2(framebuffer_t* fb, int32_t coarse_dst_i, const tilecmd_drawsmalltri_t* drawcmd)
+static void draw_coarse_block_smalltri_avx2(framebuffer_t* fb, int32_t coarse_dst_i, const tilecmd_drawsmalltri_t* pDrawcmd)
 {
-    uint64_t coarse_start_pc = qpc();
-
     // coarse blocks are made out of 4x4 fine blocks, organized as:
     //  0  1  4  5
     //  2  3  6  7
@@ -992,21 +1018,78 @@ static void draw_coarse_block_smalltri_avx2(framebuffer_t* fb, int32_t coarse_ds
     // 10 11 14 15
     // therefore, coarse blocks are rasterized by shifting around the fine block's edge equations.
 
+    tilecmd_drawsmalltri_t drawcmd = *pDrawcmd;
+
     __m256i edges[3];
     __m256i edge_trivRejs[3];
 
-    for (int32_t i = 0; i < 3; i++)
+    // for (int32_t i = 0; i < 3; i++)
     {
-        int32_t dx = drawcmd->edge_dxs[i] * FINE_BLOCK_WIDTH_IN_PIXELS;
-        int32_t dy = drawcmd->edge_dys[i] * FINE_BLOCK_WIDTH_IN_PIXELS;
+        __m256i edge0 = _mm256_set1_epi32(drawcmd.edges[0]);
+        __m256i edge1 = _mm256_set1_epi32(drawcmd.edges[1]);
+        __m256i edge2 = _mm256_set1_epi32(drawcmd.edges[2]);
 
-        edges[i] = _mm256_add_epi32(
-            _mm256_set1_epi32(drawcmd->edges[i]),
-            _mm256_setr_epi32(0, dx, dy, dx + dy, dx * 2, dx * 3, dx * 2 + dy, dx * 3 + dy));
+        int32_t dy0 = drawcmd.edge_dys[0] * FINE_BLOCK_WIDTH_IN_PIXELS;
+        int32_t dy1 = drawcmd.edge_dys[1] * FINE_BLOCK_WIDTH_IN_PIXELS;
+        int32_t dy2 = drawcmd.edge_dys[2] * FINE_BLOCK_WIDTH_IN_PIXELS;
 
-        edge_trivRejs[i] = edges[i];
-        if (dx < 0) edge_trivRejs[i] = _mm256_add_epi32(edge_trivRejs[i], _mm256_set1_epi32(dx));
-        if (dy < 0) edge_trivRejs[i] = _mm256_add_epi32(edge_trivRejs[i], _mm256_set1_epi32(dy));
+        __m256i mdy0 = _mm256_set1_epi32(dy0);
+        __m256i mdy1 = _mm256_set1_epi32(dy1);
+        __m256i mdy2 = _mm256_set1_epi32(dy2);
+
+        // initialize 0 0 dy dy 0 0 dy dy
+        __m256i yoffset0 = _mm256_unpacklo_epi64(_mm256_setzero_si256(), mdy0);
+        __m256i yoffset1 = _mm256_unpacklo_epi64(_mm256_setzero_si256(), mdy1);
+        __m256i yoffset2 = _mm256_unpacklo_epi64(_mm256_setzero_si256(), mdy2);
+
+        edge0 = _mm256_add_epi32(edge0, yoffset0);
+        edge1 = _mm256_add_epi32(edge1, yoffset1);
+        edge2 = _mm256_add_epi32(edge2, yoffset2);
+
+        int32_t dx0 = drawcmd.edge_dxs[0] * FINE_BLOCK_WIDTH_IN_PIXELS;
+        int32_t dx1 = drawcmd.edge_dxs[1] * FINE_BLOCK_WIDTH_IN_PIXELS;
+        int32_t dx2 = drawcmd.edge_dxs[2] * FINE_BLOCK_WIDTH_IN_PIXELS;
+
+        // initialize 0 dx 0 dx dx2 dx3 dx2 dx3
+        const __m256i dx2_mask = _mm256_setr_epi32(0, 0, 0, 0, -1, -1, -1, -1);
+
+        __m256i mdx0 = _mm256_set1_epi32(dx0);
+        __m256i m2dx0 = _mm256_add_epi32(mdx0, mdx0);
+        __m256i xoffset0 = _mm256_unpacklo_epi32(_mm256_setzero_si256(), mdx0);
+        xoffset0 = _mm256_add_epi32(xoffset0, _mm256_and_si256(m2dx0, dx2_mask));
+        edge0 = _mm256_add_epi32(edge0, xoffset0);
+
+        __m256i mdx1 = _mm256_set1_epi32(dx1);
+        __m256i m2dx1 = _mm256_add_epi32(mdx1, mdx1);
+        __m256i xoffset1 = _mm256_unpacklo_epi32(_mm256_setzero_si256(), mdx1);
+        xoffset1 = _mm256_add_epi32(xoffset1, _mm256_and_si256(m2dx1, dx2_mask));
+        edge1 = _mm256_add_epi32(edge1, xoffset1);
+
+        __m256i mdx2 = _mm256_set1_epi32(dx2);
+        __m256i m2dx2 = _mm256_add_epi32(mdx2, mdx2);
+        __m256i xoffset2 = _mm256_unpacklo_epi32(_mm256_setzero_si256(), mdx2);
+        xoffset2 = _mm256_add_epi32(xoffset2, _mm256_and_si256(m2dx2, dx2_mask));
+        edge2 = _mm256_add_epi32(edge2, xoffset2);
+
+        edges[0] = edge0;
+        edges[1] = edge1;
+        edges[2] = edge2;
+
+        __m256i edge_trivRej0 = edge0;
+        __m256i edge_trivRej1 = edge1;
+        __m256i edge_trivRej2 = edge2;
+
+        edge_trivRej0 = _mm256_add_epi32(edge_trivRej0, _mm256_min_epi32(_mm256_setzero_si256(), mdx0));
+        edge_trivRej1 = _mm256_add_epi32(edge_trivRej1, _mm256_min_epi32(_mm256_setzero_si256(), mdx1));
+        edge_trivRej2 = _mm256_add_epi32(edge_trivRej2, _mm256_min_epi32(_mm256_setzero_si256(), mdx2));
+
+        edge_trivRej0 = _mm256_add_epi32(edge_trivRej0, _mm256_min_epi32(_mm256_setzero_si256(), mdy0));
+        edge_trivRej1 = _mm256_add_epi32(edge_trivRej1, _mm256_min_epi32(_mm256_setzero_si256(), mdy1));
+        edge_trivRej2 = _mm256_add_epi32(edge_trivRej2, _mm256_min_epi32(_mm256_setzero_si256(), mdy2));
+
+        edge_trivRejs[0] = edge_trivRej0;
+        edge_trivRejs[1] = edge_trivRej1;
+        edge_trivRejs[2] = edge_trivRej2;
     }
 
     int32_t dst_i = coarse_dst_i;
@@ -1030,7 +1113,7 @@ static void draw_coarse_block_smalltri_avx2(framebuffer_t* fb, int32_t coarse_ds
             goto coarseblock_half_end;
         }
 
-        tilecmd_drawsmalltri_t finecmd = *drawcmd;
+        tilecmd_drawsmalltri_t finecmd = drawcmd;
         for (int32_t i = 0; i < 8; i++)
         {
             if (trivRej_pass_mask & (1 << (i * 4)))
@@ -1047,12 +1130,21 @@ static void draw_coarse_block_smalltri_avx2(framebuffer_t* fb, int32_t coarse_ds
         }
 
     coarseblock_half_end:
-        for (int32_t i = 0; i < 3; i++)
+        // for (int32_t i = 0; i < 3; i++)
         {
-            __m256i dy2 = _mm256_set1_epi32(drawcmd->edge_dys[i] * FINE_BLOCK_WIDTH_IN_PIXELS * 2);
-            edges[i] = _mm256_add_epi32(edges[i], dy2);
-            edge_trivRejs[i] = _mm256_add_epi32(edge_trivRejs[i], dy2);
+            __m256i dy2_0 = _mm256_set1_epi32(drawcmd.edge_dys[0] * 2 * FINE_BLOCK_WIDTH_IN_PIXELS);
+            __m256i dy2_1 = _mm256_set1_epi32(drawcmd.edge_dys[1] * 2 * FINE_BLOCK_WIDTH_IN_PIXELS);
+            __m256i dy2_2 = _mm256_set1_epi32(drawcmd.edge_dys[2] * 2 * FINE_BLOCK_WIDTH_IN_PIXELS);
+
+            edges[0] = _mm256_add_epi32(edges[0], dy2_0);
+            edges[1] = _mm256_add_epi32(edges[1], dy2_1);
+            edges[2] = _mm256_add_epi32(edges[2], dy2_2);
+
+            edge_trivRejs[0] = _mm256_add_epi32(edge_trivRejs[0], dy2_0);
+            edge_trivRejs[1] = _mm256_add_epi32(edge_trivRejs[1], dy2_1);
+            edge_trivRejs[2] = _mm256_add_epi32(edge_trivRejs[2], dy2_2);
         }
+
     }
 }
 #endif
@@ -1259,8 +1351,6 @@ static void draw_fine_block_largetri_scalar(framebuffer_t* fb, int32_t fine_dst_
 template<uint32_t TestEdgeMask>
 static void draw_coarse_block_largetri_scalar(framebuffer_t* fb, int32_t tile_id, int32_t coarse_dst_i, const tilecmd_drawtile_t* drawcmd)
 {
-    uint64_t coarse_start_pc = qpc();
-
     int32_t fine_edge_dxs[3];
     int32_t fine_edge_dys[3];
     for (int32_t v = 0; v < 3; v++)
@@ -1372,8 +1462,7 @@ static void draw_coarse_block_largetri_scalar(framebuffer_t* fb, int32_t tile_id
 template<uint32_t TestEdgeMask>
 static void draw_tile_largetri_scalar(framebuffer_t* fb, int32_t tile_id, const tilecmd_drawtile_t* drawcmd)
 {
-    uint64_t tile_start_pc = qpc();
-    
+   
     int32_t coarse_edge_dxs[3];
     int32_t coarse_edge_dys[3];
     for (int32_t v = 0; v < 3; v++)
@@ -1500,8 +1589,6 @@ static void draw_tile_largetri_scalar(framebuffer_t* fb, int32_t tile_id, const 
                     draw_coarse_block_largetri_scalar<7>(fb, tile_id, dst_i, &cbargs);
                     break;
                 }
-                
-                tile_start_pc = qpc();
             }
 
             for (int32_t v = 0; v < 3; v++)
@@ -1725,7 +1812,9 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
         }
         else if (tilecmd_id == tilecmd_id_drawsmalltri)
         {
+#ifdef ENABLE_PERFCOUNTERS
             uint64_t smalltri_start_pc = qpc();
+#endif
 
 #ifdef USE_HSWni
             draw_tile_smalltri_avx2(fb, tile_id, (tilecmd_drawsmalltri_t*)cmd);
@@ -1733,13 +1822,17 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
             draw_tile_smalltri_scalar(fb, tile_id, (tilecmd_drawsmalltri_t*)cmd);
 #endif
 
+#ifdef ENABLE_PERFCOUNTERS
             fb->tile_perfcounters[tile_id].smalltri_raster += qpc() - smalltri_start_pc;
+#endif
 
             cmd += sizeof(tilecmd_drawsmalltri_t) / sizeof(uint32_t);
         }
         else if (tilecmd_id >= tilecmd_id_drawlargetri_0edgemask && tilecmd_id <= tilecmd_id_drawlargetri_7edgemask)
         {   
+#ifdef ENABLE_PERFCOUNTERS
             uint64_t largetri_start_pc = qpc();
+#endif
 
 #if defined(USE_HSWni) && 0
             switch (tilecmd_id - tilecmd_id_drawlargetri_0edgemask)
@@ -1799,17 +1892,23 @@ static void framebuffer_resolve_tile(framebuffer_t* fb, int32_t tile_id)
             }
 #endif
 
+#ifdef ENABLE_PERFCOUNTERS
             fb->tile_perfcounters[tile_id].largetri_raster += qpc() - largetri_start_pc;
+#endif
 
             cmd += sizeof(tilecmd_drawtile_t) / sizeof(uint32_t);
         }
         else if (tilecmd_id == tilecmd_id_cleartile)
         {
+#ifdef ENABLE_PERFCOUNTERS
             uint64_t clear_start_pc = qpc();
+#endif
 
             clear_tile(fb, tile_id, (tilecmd_cleartile_t*)cmd);
 
+#ifdef ENABLE_PERFCOUNTERS
             fb->tile_perfcounters[tile_id].clear += qpc() - clear_start_pc;
+#endif
 
             cmd += sizeof(tilecmd_cleartile_t) / sizeof(uint32_t);
         }
@@ -2054,7 +2153,9 @@ static void rasterize_triangle(
     framebuffer_t* fb,
     xyzw_i32_t clipVerts[3])
 {
+#ifdef ENABLE_PERFCOUNTERS
     uint64_t clipping_start_pc = qpc();
+#endif
 
     int32_t fully_clipped = 0;
 
@@ -2138,9 +2239,15 @@ static void rasterize_triangle(
             xyzw_i32_t clipVerts1[3] = { clipVerts[0], clipVerts[1], clipVerts[2] };
             clipVerts1[clipped_vert] = clipped1;
 
+#ifdef ENABLE_PERFCOUNTERS
             fb->perfcounters.clipping += qpc() - clipping_start_pc;
+#endif
+
             rasterize_triangle(fb, clipVerts1);
+            
+#ifdef ENABLE_PERFCOUNTERS
             clipping_start_pc = qpc();
+#endif
 
             // set self up to output the second clipped triangle
             clipVerts[clipped_vert] = clipped2;
@@ -2228,9 +2335,15 @@ static void rasterize_triangle(
             xyzw_i32_t clipVerts1[3] = { clipVerts[0], clipVerts[1], clipVerts[2] };
             clipVerts1[clipped_vert] = clipped1;
 
+#ifdef ENABLE_PERFCOUNTERS
             fb->perfcounters.clipping += qpc() - clipping_start_pc;
+#endif
+
             rasterize_triangle(fb, clipVerts1);
+            
+#ifdef ENABLE_PERFCOUNTERS
             clipping_start_pc = qpc();
+#endif
 
             // set self up to output the second clipped triangle
             clipVerts[clipped_vert] = clipped2;
@@ -2239,13 +2352,19 @@ static void rasterize_triangle(
     }
 
 clipping_end:
+
+#ifdef ENABLE_PERFCOUNTERS
     fb->perfcounters.clipping += qpc() - clipping_start_pc;
+#endif
+
     if (fully_clipped)
     {
         return;
     }
 
+#ifdef ENABLE_PERFCOUNTERS
     uint64_t commonsetup_start_pc = qpc();
+#endif
 
     // transform vertices from clip space to window coordinates
     xyzw_i32_t verts[3];
@@ -2321,13 +2440,19 @@ clipping_end:
         (bbox_max_y - bbox_min_y) >= (TILE_WIDTH_IN_PIXELS << 8);
 
 commonsetup_end:
+
+#ifdef ENABLE_PERFCOUNTERS
     fb->perfcounters.common_setup += qpc() - commonsetup_start_pc;
+#endif
+
     if (fully_clipped)
     {
         return;
     }
 
+#ifdef ENABLE_PERFCOUNTERS
     uint64_t setup_start_pc = qpc();
+#endif
 
     if (!is_large)
     {
@@ -2480,9 +2605,15 @@ commonsetup_end:
                     edge_dys[v] * (first_tile_y - last_tile_y)) * TILE_WIDTH_IN_PIXELS;
             }
 
+#ifdef ENABLE_PERFCOUNTERS
             fb->perfcounters.smalltri_setup += qpc() - setup_start_pc;
+#endif
+
             framebuffer_push_tilecmd(fb, first_tile_id, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
+
+#ifdef ENABLE_PERFCOUNTERS
             setup_start_pc = qpc();
+#endif
         }
 
         // draw top right tile
@@ -2495,9 +2626,16 @@ commonsetup_end:
             }
 
             int32_t tile_id_right = first_tile_id + 1;
+
+#ifdef ENABLE_PERFCOUNTERS
             fb->perfcounters.smalltri_setup += qpc() - setup_start_pc;
+#endif
+
             framebuffer_push_tilecmd(fb, tile_id_right, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
+
+#ifdef ENABLE_PERFCOUNTERS
             setup_start_pc = qpc();
+#endif
         }
 
         // draw bottom left tile
@@ -2510,9 +2648,16 @@ commonsetup_end:
             }
 
             int32_t tile_id_down = first_tile_id + fb->width_in_tiles;
+
+#ifdef ENABLE_PERFCOUNTERS
             fb->perfcounters.smalltri_setup += qpc() - setup_start_pc;
+#endif
+
             framebuffer_push_tilecmd(fb, tile_id_down, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
+
+#ifdef ENABLE_PERFCOUNTERS
             setup_start_pc = qpc();
+#endif
         }
 
         // draw bottom right tile
@@ -2525,9 +2670,16 @@ commonsetup_end:
             }
 
             int32_t tile_id_downright = first_tile_id + 1 + fb->width_in_tiles;
+
+#ifdef ENABLE_PERFCOUNTERS
             fb->perfcounters.smalltri_setup += qpc() - setup_start_pc;
+#endif
+
             framebuffer_push_tilecmd(fb, tile_id_downright, &drawsmalltricmd.tilecmd_id, sizeof(drawsmalltricmd) / sizeof(uint32_t));
+
+#ifdef ENABLE_PERFCOUNTERS
             setup_start_pc = qpc();
+#endif
         }
     }
     else // large triangle
@@ -2736,9 +2888,14 @@ commonsetup_end:
                     drawtilecmd.rcp_triarea2_mantissa = rcp_triarea2_mantissa;
                     drawtilecmd.rcp_triarea2_rshift = rcp_triarea2_mantissa_rshift;
 
+#ifdef ENABLE_PERFCOUNTERS
                     fb->perfcounters.largetri_setup += qpc() - setup_start_pc;
+#endif
                     framebuffer_push_tilecmd(fb, tile_i, &drawtilecmd.tilecmd_id, sizeof(drawtilecmd) / sizeof(uint32_t));
+
+#ifdef ENABLE_PERFCOUNTERS
                     setup_start_pc = qpc();
+#endif
                 }
 
                 tile_i++;
@@ -2763,11 +2920,15 @@ commonsetup_end:
 setup_end:;
     if (is_large)
     {
+#ifdef ENABLE_PERFCOUNTERS
         fb->perfcounters.largetri_setup += qpc() - setup_start_pc;
+#endif
     }
     else
     {
+#ifdef ENABLE_PERFCOUNTERS
         fb->perfcounters.smalltri_setup += qpc() - setup_start_pc;
+#endif
     }
 } 
 
@@ -2846,20 +3007,30 @@ int32_t framebuffer_get_total_num_tiles(framebuffer_t* fb)
 uint64_t framebuffer_get_perfcounter_frequency(framebuffer_t* fb)
 {
     assert(fb);
+#ifdef ENABLE_PERFCOUNTERS
     return fb->pc_frequency;
+#else
+    return 1;
+#endif
 }
 
 void framebuffer_reset_perfcounters(framebuffer_t* fb)
 {
+#ifdef ENABLE_PERFCOUNTERS
     memset(&fb->perfcounters, 0, sizeof(framebuffer_perfcounters_t));
     memset(fb->tile_perfcounters, 0, sizeof(framebuffer_tile_perfcounters_t) * fb->total_num_tiles);
+#endif
 }
 
 int32_t framebuffer_get_num_perfcounters(framebuffer_t* fb)
 {
     assert(fb);
 
+#ifdef ENABLE_PERFCOUNTERS
     return sizeof(framebuffer_perfcounters_t) / sizeof(uint64_t);
+#else
+    return 0;
+#endif
 }
 
 void framebuffer_get_perfcounter_names(framebuffer_t* fb, const char** names)
@@ -2867,7 +3038,9 @@ void framebuffer_get_perfcounter_names(framebuffer_t* fb, const char** names)
     assert(fb);
     assert(names);
 
+#ifdef ENABLE_PERFCOUNTERS
     memcpy(names, kFramebufferPerfcounterNames, sizeof(kFramebufferPerfcounterNames));
+#endif
 }
 
 void framebuffer_get_perfcounters(framebuffer_t* fb, uint64_t* pcs)
@@ -2875,14 +3048,20 @@ void framebuffer_get_perfcounters(framebuffer_t* fb, uint64_t* pcs)
     assert(fb);
     assert(pcs);
 
+#ifdef ENABLE_PERFCOUNTERS
     memcpy(pcs, &fb->perfcounters, sizeof(framebuffer_perfcounters_t));
+#endif
 }
 
 int32_t framebuffer_get_num_tile_perfcounters(framebuffer_t* fb)
 {
     assert(fb);
     
+#ifdef ENABLE_PERFCOUNTERS
     return sizeof(framebuffer_tile_perfcounters_t) / sizeof(uint64_t);
+#else
+    return 0;
+#endif
 }
 
 void framebuffer_get_tile_perfcounter_names(framebuffer_t* fb, const char** names)
@@ -2890,7 +3069,9 @@ void framebuffer_get_tile_perfcounter_names(framebuffer_t* fb, const char** name
     assert(fb);
     assert(names);
 
+#ifdef ENABLE_PERFCOUNTERS
     memcpy(names, kFramebufferTilePerfcounterNames, sizeof(kFramebufferTilePerfcounterNames));
+#endif
 }
 
 void framebuffer_get_tile_perfcounters(framebuffer_t* fb, uint64_t* tile_pcs)
@@ -2898,5 +3079,7 @@ void framebuffer_get_tile_perfcounters(framebuffer_t* fb, uint64_t* tile_pcs)
     assert(fb);
     assert(tile_pcs);
 
+#ifdef ENABLE_PERFCOUNTERS
     memcpy(tile_pcs, fb->tile_perfcounters, sizeof(framebuffer_tile_perfcounters_t) * fb->total_num_tiles);
+#endif
 }

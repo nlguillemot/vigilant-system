@@ -69,11 +69,11 @@ typedef struct scene_t
 
 typedef struct renderer_perfcounters_t
 {
-    uint64_t mvptransform;
+    uint64_t renderinstance;
 } renderer_perfcounters_t;
 
 const char* kRendererPerfCounterNames[] =  {
-    "mvptransform"
+    "renderinstance"
 };
 
 static_assert(sizeof(kRendererPerfCounterNames) / sizeof(kRendererPerfCounterNames) == sizeof(renderer_perfcounters_t) / sizeof(uint64_t), "Renderer names count");
@@ -142,6 +142,8 @@ static void renderer_render_instance(renderer_t* rd, scene_t* sc, instance_t* in
     int32_t model_id = instance->model_id;
     model_t* model = &sc->models[model_id];
 
+    uint64_t renderinstance_start_pc = qpc();
+
     for (uint32_t index_id = 0; index_id < model->index_count; index_id += 3)
     {
         if (g_FilterTriangles && (g_FilterTriangle0 != -1 || g_FilterTriangle1 != -1 || g_FilterTriangle2 != -1) &&
@@ -153,8 +155,6 @@ static void renderer_render_instance(renderer_t* rd, scene_t* sc, instance_t* in
         int32_t xverts[3][4];
 
         // TODO: cache transformations based on vertex_id
-
-        uint64_t mvptransform_start_pc = qpc();
 
         for (uint32_t index_off = 0; index_off < 3; index_off++)
         {
@@ -171,11 +171,11 @@ static void renderer_render_instance(renderer_t* rd, scene_t* sc, instance_t* in
             xverts[index_off][3] = s1516_fma(viewproj[3], vert[0], s1516_fma(viewproj[7], vert[1], s1516_fma(viewproj[11], vert[2], viewproj[15])));
         }
 
-        rd->perfcounters.mvptransform += qpc() - mvptransform_start_pc;
-
         // TODO: buffer up more triangles to draw
         framebuffer_draw(rd->fb, &xverts[0][0], 3);
     }
+
+    rd->perfcounters.renderinstance += qpc() - renderinstance_start_pc;
 }
 
 void renderer_render_scene(renderer_t* rd, scene_t* sc)
